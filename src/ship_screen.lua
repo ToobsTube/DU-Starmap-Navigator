@@ -67,6 +67,7 @@ args=
 
 local VERSION="v2.0.0"
 BaseChannel ="NavBase" --export: Personal base channel
+OrgTag      =""        --export: Org prefix for WPs e.g. "Alliance" (blank = personal)
 OrgChannel1 ="NavOrg"  --export: Org base channel 1
 OrgChannel2 =""        --export: Org base channel 2 (optional)
 OrgChannel3 =""        --export: Org base channel 3 (optional)

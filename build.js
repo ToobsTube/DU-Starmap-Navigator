@@ -54,10 +54,6 @@ const CONFIGS = {
       '-4': 'system',  '-5': 'library',
     }
   },
-  base_screen: {
-    output: 'Navigator_Base_Screen_v2.0.txt',
-    rawLua: true,
-  },
 };
 
 function makeSlotEntry(name) {

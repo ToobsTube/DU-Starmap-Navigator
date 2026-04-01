@@ -81,6 +81,7 @@ args=
 local VERSION="v2.0.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
+OrgTag      =""        --export: Org prefix for WPs e.g. "Alliance" (blank = personal)
 OrgChannel1 ="NavOrg"  --export: Org base channel 1
 OrgChannel2 =""        --export: Org base channel 2 (optional)
 OrgChannel3 =""        --export: Org base channel 3 (optional)
@@ -295,9 +296,10 @@ end
 
 function PushToChannel(ch,wps,routes)
   if not emitter then SetStatus("No emitter") return end
+  local pfx=(OrgTag and OrgTag~="") and (OrgTag.."-") or ""
   local n=0
-  for _,wp in ipairs(wps) do emitter.send(ch,"<PushWP>"..json.encode({n=wp.n,c=wp.c}):gsub('"',"@@@")); n=n+1 end
-  for _,r in ipairs(routes) do emitter.send(ch,"<PushRoute>"..json.encode({n=r.n,pts=r.pts}):gsub('"',"@@@")); n=n+1 end
+  for _,wp in ipairs(wps) do emitter.send(ch,"<PushWP>"..json.encode({n=pfx..wp.n,c=wp.c}):gsub('"',"@@@")); n=n+1 end
+  for _,r in ipairs(routes) do emitter.send(ch,"<PushRoute>"..json.encode({n=pfx..r.n,pts=r.pts}):gsub('"',"@@@")); n=n+1 end
   SetStatus("Pushed "..n.." items to "..ch)
 end
 
