@@ -8,7 +8,7 @@
 --   Slot 2: emitter    (Emitter)
 --
 -- Output via Lua chat. AR marker via system.setWaypoint().
--- Alt+Up/Down = browse menu  |  Alt+Option1 (Alt+1) = activate
+-- Alt+Up/Down = browse menu  |  Alt+Right = activate  |  Alt+Shift+Ins = toggle HUD
 -- ================================================================
 
 --[[@
@@ -390,7 +390,7 @@ function DrawHUD()
 
   -- hint row
   if #items>0 then
-    h[#h+1]=string.format('<div class="nh">(%d/%d)  Alt+&#8593;&#8595; browse  |  Alt+1 select</div>', MenuIndex>0 and MenuIndex or 0, #items)
+    h[#h+1]=string.format('<div class="nh">(%d/%d)  Alt+&#8593;&#8595; browse  |  Alt+&#8594; select</div>', MenuIndex>0 and MenuIndex or 0, #items)
   else
     h[#h+1]='<div class="nh">No waypoints — type: add NAME</div>'
   end
@@ -409,7 +409,7 @@ function DrawHUD()
 end
 
 function ActivateMenuItem()
-  if MenuIndex<=0 then SetStatus("Alt+1/2 to browse, Alt+3 to activate") return end
+  if MenuIndex<=0 then SetStatus("Alt+Up/Down to browse, Alt+Right to activate") return end
   local items=GetMenuItems()
   local item=items[MenuIndex]
   if not item then return end
@@ -453,7 +453,7 @@ UpdateWaypoint()
 DrawHUD()
 system.print("=== Navigator "..VERSION.." (No Screen) ===  "..ShipID)
 system.print("Target: "..(NavTarget and NavTarget.n or "none"))
-system.print("Alt+Up/Down = browse  |  Alt+1 = activate  |  type help")
+system.print("Alt+Up/Down = browse  |  Alt+Right = activate  |  type help")
 
 
 --[[@
@@ -551,7 +551,7 @@ DrawHUD()
 --[[@
 slot=-4
 event=onActionStart(action)
-args="option1"
+args="right"
 ]]
 if not L_ALT then return end
 ActivateMenuItem()
@@ -648,7 +648,7 @@ if lo=="help" then
   system.print("org NAME               switch active context")
   system.print("list / routes          list items")
   system.print("status                 show current nav")
-  system.print("Alt+Up/Down = browse  |  Alt+1 = activate")
+  system.print("Alt+Up/Down = browse  |  Alt+Right = activate")
   return
 end
 
