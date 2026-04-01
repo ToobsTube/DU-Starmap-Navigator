@@ -33,7 +33,7 @@ function Trim(s) return (s or ""):match("^%s*(.-)%s*$") end
 
 function SetStatus(msg, dur)
   StatusMsg    = msg
-  StatusExpiry = os.clock() + (dur or 5)
+  StatusExpiry = system.getTime() + (dur or 5)
   system.print("[ORG] " .. msg)
 end
 
@@ -295,7 +295,7 @@ slot=-1
 event=onTimer(tag)
 args="org_tick"
 ]]
-if StatusMsg~="" and os.clock()>StatusExpiry then StatusMsg="" end
+if StatusMsg~="" and system.getTime()>StatusExpiry then StatusMsg="" end
 DrawScreen()
 
 

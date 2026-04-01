@@ -2,14 +2,13 @@
 -- NAVIGATOR SHIP - NO SCREEN VERSION v2.0.0
 -- Dual Universe Navigation System
 --
--- SLOT CONNECTIONS:
---   Slot 1: databank   (Databank)
---   Slot 2: core       (Dynamic Core Unit)
---   Slot 3: receiver   (Receiver)
---   Slot 4: emitter    (Emitter)
+-- SLOT CONNECTIONS (connect in this order):
+--   Slot 0: databank   (Databank)
+--   Slot 1: receiver   (Receiver)
+--   Slot 2: emitter    (Emitter)
 --
 -- Output via Lua chat. AR marker via system.setWaypoint().
--- Alt+1/2 browse list  |  Alt+3 activate
+-- Alt+Up/Down = browse menu  |  Alt+Option1 (Alt+1) = activate
 -- ================================================================
 
 --[[@
@@ -27,7 +26,26 @@ end
 function ParsePos(s)
   if not s or s=="" then return nil end
   local w,b,x,y,z=s:match("::pos{(%d+),(%d+),([-%.%d]+),([-%.%d]+),([-%.%d]+)}")
-  if x then return {w=tonumber(w),b=tonumber(b),x=tonumber(x),y=tonumber(y),z=tonumber(z)} end
+  if not x then return nil end
+  w,b,x,y,z=tonumber(w),tonumber(b),tonumber(x),tonumber(y),tonumber(z)
+  -- world coords (body=0) — already XYZ
+  if b==0 then return {x=x,y=y,z=z} end
+  -- planet-relative — convert via atlas
+  if Atlas then
+    for _,body in pairs(Atlas[0]) do
+      if body.id==b then
+        local deg=math.pi/180
+        local lat,lon,alt=x*deg,y*deg,z
+        local r=body.radius+alt
+        local cx=r*math.cos(lat)*math.cos(lon)
+        local cy=r*math.cos(lat)*math.sin(lon)
+        local cz=r*math.sin(lat)
+        local c=body.center
+        return {x=c[1]+cx,y=c[2]+cy,z=c[3]+cz}
+      end
+    end
+  end
+  -- atlas missing for this body — return nil so distance shows ---
   return nil
 end
 function CalcDist(p1,p2)
@@ -59,7 +77,9 @@ slot=-1
 event=onStart()
 args=
 ]]
+
 local VERSION="v2.0.0"
+CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 OrgChannel1 ="NavOrg"  --export: Org base channel 1
 OrgChannel2 =""        --export: Org base channel 2 (optional)
@@ -75,6 +95,9 @@ SyncReceived   = 0
 SyncOrgName    = ""
 MenuIndex      = 0   -- keyboard cursor position
 ActiveContext  = "personal"  -- "personal" or org name
+L_ALT          = false
+L_SHIFT        = false
+HUD_VISIBLE    = true
 
 -- ── Databank ──────────────────────────────────────────────────
 function LoadData()
@@ -195,7 +218,7 @@ end
 
 -- ── Navigation ───────────────────────────────────────────────
 function GetCurrentPos()
-  if core then local p=core.getConstructWorldPos(); if p then return {x=p[1],y=p[2],z=p[3]} end end
+  local p=construct.getWorldPosition(); if p then return {x=p[1],y=p[2],z=p[3]} end
   return nil
 end
 function GetCurrentPosStr()
@@ -203,8 +226,12 @@ function GetCurrentPosStr()
   return string.format("::pos{0,0,%.4f,%.4f,%.4f}",p.x,p.y,p.z)
 end
 function UpdateWaypoint()
-  if NavTarget and NavTarget.c then system.setWaypoint(NavTarget.c)
-  else system.setWaypoint("") end
+  if NavTarget and NavTarget.c and NavTarget.c~="" then
+    system.setWaypoint(NavTarget.c)
+  end
+end
+function ClearWaypoint()
+  NavTarget=nil; system.setWaypoint(""); SaveData()
 end
 
 function SetNavWP(name)
@@ -323,12 +350,62 @@ function GetMenuItems()
   return items
 end
 
-function PrintMenuCursor()
+function DrawHUD()
+  if not HUD_VISIBLE then system.showScreen(0) return end
+  local W=system.getScreenWidth(); local H=system.getScreenHeight()
+  local sc=H/1080
+  local pw=math.floor(340*sc)
+  local fs=math.floor(14*sc); local fsS=math.floor(12*sc)
+  local rh=math.floor(26*sc)
+  local px=math.floor(W*0.18); local py=math.floor(H*0.30)
+
   local items=GetMenuItems()
-  if #items==0 then system.print("[NAV] No items") return end
-  local item=items[MenuIndex]
-  if not item then return end
-  system.print("[NAV] ("..MenuIndex.."/"..#items..")  "..item.label)
+  local winSize=12
+  local si=math.max(1, MenuIndex-5)
+  local ei=math.min(#items, si+winSize-1)
+  if ei-si < winSize-1 then si=math.max(1,ei-winSize+1) end
+
+  local h={}
+  h[#h+1]=string.format([[<style>
+   .np{position:absolute;top:%dpx;left:%dpx;width:%dpx;background:rgba(0,5,25,0.88);border:1px solid rgba(0,140,255,0.55);}
+   .nt{font-family:Arial;font-size:%dpx;color:rgb(0,210,255);text-align:center;padding:3px 6px;background:rgba(0,70,150,0.5);}
+   .nr{font-family:Arial;font-size:%dpx;color:rgb(160,190,230);padding:2px 8px;border-top:1px solid rgba(0,80,180,0.25);white-space:nowrap;overflow:hidden;}
+   .ng{color:rgb(0,220,160);}
+   .ns{background:rgba(0,110,240,0.55);color:white;}
+   .nh{color:rgb(90,120,155);font-size:%dpx;text-align:center;padding:2px;}
+  </style>]], py,px,pw, fs,fs,fsS)
+  h[#h+1]='<div class="np">'
+  h[#h+1]=string.format('<div class="nt">NAVIGATOR  %s</div>', ShipID)
+
+  -- nav target
+  if NavTarget then
+    local tp=ParsePos(NavTarget.c); local cp=GetCurrentPos()
+    local dist=(tp and cp) and FormatDist(CalcDist(cp,tp)) or "---"
+    local lbl=(NavTarget.t=="route") and "ROUTE" or "WP"
+    local si2=(NavTarget.t=="route") and string.format(" [%d/%d]",NavTarget.stopIdx,NavTarget.stopTotal) or ""
+    h[#h+1]=string.format('<div class="nr ng">&#9658; %s: %s%s  %s</div>', lbl, NavTarget.n, si2, dist)
+  else
+    h[#h+1]='<div class="nr ng">&#9658; No target</div>'
+  end
+
+  -- hint row
+  if #items>0 then
+    h[#h+1]=string.format('<div class="nh">(%d/%d)  Alt+&#8593;&#8595; browse  |  Alt+1 select</div>', MenuIndex>0 and MenuIndex or 0, #items)
+  else
+    h[#h+1]='<div class="nh">No waypoints — type: add NAME</div>'
+  end
+
+  -- item list
+  for i=si,ei do
+    local item=items[i]
+    local cls=(i==MenuIndex) and 'nr ns' or 'nr'
+    local pre=(i==MenuIndex) and '&#9658; ' or '&#160;&#160;&#160;'
+    h[#h+1]=string.format('<div class="%s">%s%s</div>', cls, pre, item.label)
+  end
+
+  h[#h+1]='</div>'
+  system.setScreen(table.concat(h))
+  system.showScreen(1)
 end
 
 function ActivateMenuItem()
@@ -347,14 +424,24 @@ function ActivateMenuItem()
     if p then AddWP(AutoName("WP",ContextWPs()),p) else SetStatus("No position") end
   elseif item.type=="next_stop"  then NextStop()
   elseif item.type=="prev_stop"  then PrevStop()
-  elseif item.type=="clear_nav"  then NavTarget=nil;SaveData();UpdateWaypoint();SetStatus("Nav cleared")
+  elseif item.type=="clear_nav"  then ClearWaypoint();SetStatus("Nav cleared")
   elseif item.type=="sync_base"  then RequestSync(BaseChannel)
   elseif item.type=="sync_org"   then RequestSync(OrgChannel1)
   elseif item.type=="push_base"  then PushToChannel(BaseChannel,PersonalWPs,PersonalRoutes)
   end
+  DrawHUD()
 end
 
 -- ── Init ──────────────────────────────────────────────────────
+do
+  local ok,res=pcall(require,"autoconf/custom/"..CustomAtlas)
+  if ok then Atlas=res; system.print("[NAV] Loaded custom atlas: "..CustomAtlas)
+  else
+    local ok2,res2=pcall(require,"atlas")
+    if ok2 then Atlas=res2; system.print("[NAV] Loaded default atlas")
+    else system.print("[NAV] WARNING: No atlas loaded — planet distances unavailable") end
+  end
+end
 LoadData()
 local chs={BaseChannel}
 if OrgChannel1~="" then table.insert(chs,OrgChannel1) end
@@ -363,9 +450,10 @@ if OrgChannel3~="" then table.insert(chs,OrgChannel3) end
 if receiver then receiver.setChannelList(chs) end
 unit.setTimer("nav_tick",5)
 UpdateWaypoint()
+DrawHUD()
 system.print("=== Navigator "..VERSION.." (No Screen) ===  "..ShipID)
 system.print("Target: "..(NavTarget and NavTarget.n or "none"))
-system.print("Alt+1/2 browse  |  Alt+3 activate  |  type help")
+system.print("Alt+Up/Down = browse  |  Alt+1 = activate  |  type help")
 
 
 --[[@
@@ -374,6 +462,7 @@ event=onStop()
 args=
 ]]
 system.setWaypoint("")
+system.showScreen(0)
 
 
 --[[@
@@ -382,6 +471,7 @@ event=onTimer(tag)
 args="nav_tick"
 ]]
 UpdateWaypoint()
+DrawHUD()
 if NavTarget then
   local tp=ParsePos(NavTarget.c); local cp=GetCurrentPos()
   local dist=(tp and cp) and FormatDist(CalcDist(cp,tp)) or "---"
@@ -392,37 +482,83 @@ end
 
 
 --[[@
-slot=-1
-event=onActionStart(action)
-args="option1"
+slot=-4
+event=onActionLoop(action)
+args="lalt"
 ]]
+L_ALT=true
+
+
+--[[@
+slot=-4
+event=onActionStop(action)
+args="lalt"
+]]
+L_ALT=false
+
+
+--[[@
+slot=-4
+event=onActionLoop(action)
+args="lshift"
+]]
+L_SHIFT=true
+
+
+--[[@
+slot=-4
+event=onActionStop(action)
+args="lshift"
+]]
+L_SHIFT=false
+
+
+--[[@
+slot=-4
+event=onActionStart(action)
+args="insert"
+]]
+if L_ALT and L_SHIFT then
+  HUD_VISIBLE=not HUD_VISIBLE
+  DrawHUD()
+end
+
+
+--[[@
+slot=-4
+event=onActionStart(action)
+args="up"
+]]
+if not L_ALT then return end
 local items=GetMenuItems()
 if #items==0 then SetStatus("No items") return end
 MenuIndex=(MenuIndex<=1) and #items or (MenuIndex-1)
-PrintMenuCursor()
+DrawHUD()
 
 
 --[[@
-slot=-1
+slot=-4
 event=onActionStart(action)
-args="option2"
+args="down"
 ]]
+if not L_ALT then return end
 local items=GetMenuItems()
 if #items==0 then SetStatus("No items") return end
 MenuIndex=(MenuIndex>=#items) and 1 or (MenuIndex+1)
-PrintMenuCursor()
+DrawHUD()
 
 
 --[[@
-slot=-1
+slot=-4
 event=onActionStart(action)
-args="option3"
+args="option1"
 ]]
+if not L_ALT then return end
 ActivateMenuItem()
 
 
 --[[@
-slot=2
+slot=1
 event=onReceived(channel,message)
 args=*,*
 ]]
@@ -512,7 +648,7 @@ if lo=="help" then
   system.print("org NAME               switch active context")
   system.print("list / routes          list items")
   system.print("status                 show current nav")
-  system.print("Alt+1/2  browse  |  Alt+3  activate")
+  system.print("Alt+Up/Down = browse  |  Alt+1 = activate")
   return
 end
 
@@ -547,7 +683,7 @@ local navN=t:match("^[Nn][Aa][Vv]%s+(.*)")
 if navN then
   navN=Trim(navN)
   if navN=="" or navN:lower()=="off" or navN:lower()=="clear" then
-    NavTarget=nil;SaveData();UpdateWaypoint();SetStatus("Nav cleared")
+    ClearWaypoint();SetStatus("Nav cleared")
   else
     if not SetNavWP(navN) then SetNavRoute(navN,1) end
   end

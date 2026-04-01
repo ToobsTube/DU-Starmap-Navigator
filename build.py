@@ -23,11 +23,11 @@ CONFIGS = {
     "ship_screen": {
         "output": "Navigator_Ship_Screen_v1.0.txt",
         "slots": {
-            "0":  {"name": "screen"},
-            "1":  {"name": "databank"},
-            "2":  {"name": "core"},
-            "3":  {"name": "receiver"},
-            "4":  {"name": "emitter"},
+            "0":  {"name": "link1"},
+            "1":  {"name": "link2"},
+            "2":  {"name": "link3"},
+            "3":  {"name": "link4"},
+            "4":  {"name": "link5"},
             "-1": {"name": "unit"},
             "-2": {"name": "construct"},
             "-3": {"name": "player"},
@@ -38,10 +38,10 @@ CONFIGS = {
     "ship_noscreen": {
         "output": "Navigator_Ship_NoScreen_v1.0.txt",
         "slots": {
-            "0":  {"name": "databank"},
-            "1":  {"name": "core"},
-            "2":  {"name": "receiver"},
-            "3":  {"name": "emitter"},
+            "0":  {"name": "link1"},
+            "1":  {"name": "link2"},
+            "2":  {"name": "link3"},
+            "3":  {"name": "link4"},
             "-1": {"name": "unit"},
             "-2": {"name": "construct"},
             "-3": {"name": "player"},
@@ -52,10 +52,10 @@ CONFIGS = {
     "base": {
         "output": "Navigator_Base_v1.0.txt",
         "slots": {
-            "0":  {"name": "screen"},
-            "1":  {"name": "databank"},
-            "2":  {"name": "receiver"},
-            "3":  {"name": "emitter"},
+            "0":  {"name": "link1"},
+            "1":  {"name": "link2"},
+            "2":  {"name": "link3"},
+            "3":  {"name": "link4"},
             "-1": {"name": "unit"},
             "-2": {"name": "construct"},
             "-3": {"name": "player"},
@@ -66,10 +66,10 @@ CONFIGS = {
     "orgbase": {
         "output": "Navigator_OrgBase_v1.0.txt",
         "slots": {
-            "0":  {"name": "screen"},
-            "1":  {"name": "databank"},
-            "2":  {"name": "receiver"},
-            "3":  {"name": "emitter"},
+            "0":  {"name": "link1"},
+            "1":  {"name": "link2"},
+            "2":  {"name": "link3"},
+            "3":  {"name": "link4"},
             "-1": {"name": "unit"},
             "-2": {"name": "construct"},
             "-3": {"name": "player"},

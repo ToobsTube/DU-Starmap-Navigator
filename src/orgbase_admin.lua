@@ -2,11 +2,11 @@
 -- NAVIGATOR ORG BASE - ADMIN PB v2.0.0
 -- Dual Universe Navigation System
 --
--- SLOT CONNECTIONS:
+-- SLOT CONNECTIONS (connect in this order):
 --   Slot 0: screen     (Screen Unit)
 --   Slot 1: databank   (SHARED databank — same one orgbase_sync uses)
 --   Slot 2: receiver   (Receiver)
---   Slot 3: emitter    (Emitter - optional, for push-back)
+--   Slot 3: emitter    (Emitter)
 --
 -- RDMS: restrict "use element" to admins only.
 -- This PB is the ONLY one that writes to the shared databank.
@@ -28,7 +28,7 @@ function ParsePos(s)
   return nil
 end
 function SetStatus(msg,dur)
-  StatusMsg=msg; StatusExpiry=os.clock()+(dur or 6)
+  StatusMsg=msg; StatusExpiry=system.getTime()+(dur or 6)
   system.print("[ORG-ADMIN] "..msg)
 end
 
@@ -38,6 +38,7 @@ slot=-1
 event=onStart()
 args=
 ]]
+
 local VERSION="v2.0.0"
 OrgChannel  ="NavOrg"      --export: Set once — saved to databank and read by Sync PB
 OrgName     ="MyOrg"       --export: Display name for this org (shown on sync PB screen)
@@ -199,7 +200,7 @@ function BuildScreenScript()
   local S={}
   S[1]=string.format([[
 local json=require('dkjson')
-local C=32 local SW,SH=1024,576
+local C=32 local SW,SH=getResolution()
 local ScrollWP=%d local ScrollRT=%d
 local SelWP=%q local SelRT=%q local SelStop=%d
 local StatusMsg=%q local OrgName=%q local OrgChannel=%q

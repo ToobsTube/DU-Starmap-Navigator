@@ -7,11 +7,11 @@
 -- The screen shows the channel name and org name so any member can
 -- configure their ship without asking for help.
 --
--- SLOT CONNECTIONS:
---   Slot 1: screen     (Screen Unit)
---   Slot 2: databank   (SHARED databank — same one orgbase_admin uses)
---   Slot 3: receiver   (Receiver)
---   Slot 4: emitter    (Emitter)
+-- SLOT CONNECTIONS (connect in this order):
+--   Slot 0: screen     (Screen Unit)
+--   Slot 1: databank   (SHARED databank — same one orgbase_admin uses)
+--   Slot 2: receiver   (Receiver)
+--   Slot 3: emitter    (Emitter)
 --
 -- Channel and org name are read from databank (set by Admin PB).
 -- No --export fields — nothing for members to tamper with.
@@ -30,6 +30,7 @@ slot=-1
 event=onStart()
 args=
 ]]
+
 local VERSION   = "v2.0.0"
 OrgChannel      = "NavOrg"   -- fallback; overridden by databank
 OrgName         = "Org"      -- fallback; overridden by databank

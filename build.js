@@ -21,8 +21,8 @@ const CONFIGS = {
   ship_noscreen: {
     output: 'Navigator_Ship_NoScreen_v2.0.txt',
     slots: {
-       '1': 'databank', '2': 'core',
-       '3': 'receiver', '4': 'emitter',
+       '0': 'databank',
+       '1': 'receiver', '2': 'emitter',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
@@ -48,11 +48,15 @@ const CONFIGS = {
   orgbase_sync: {
     output: 'Navigator_OrgBase_Sync_v2.0.txt',
     slots: {
-       '1': 'screen',   '2': 'databank',
-       '3': 'receiver', '4': 'emitter',
+       '0': 'screen',   '1': 'databank',
+       '2': 'receiver', '3': 'emitter',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
+  },
+  base_screen: {
+    output: 'Navigator_Base_Screen_v2.0.txt',
+    rawLua: true,
   },
 };
 
@@ -112,6 +116,14 @@ function build(sourceName, config) {
 
   const lua = fs.readFileSync(srcPath, 'utf8');
 
+  fs.mkdirSync('dist', { recursive: true });
+
+  if (config.rawLua) {
+    fs.writeFileSync(outPath, lua, 'utf8');
+    console.log(`  OK  (raw Lua screen script)`);
+    return;
+  }
+
   const rawHandlers = parseHandlers(lua);
   const duHandlers  = rawHandlers.map(h => buildHandler(h, config.slots));
 
@@ -122,7 +134,6 @@ function build(sourceName, config) {
 
   const duJson = { slots, handlers: duHandlers, methods: [], events: [] };
 
-  fs.mkdirSync('dist', { recursive: true });
   fs.writeFileSync(outPath, JSON.stringify(duJson), 'utf8');
   console.log(`  OK  (${duHandlers.length} handlers, ${Object.keys(slots).length} slots)`);
 }

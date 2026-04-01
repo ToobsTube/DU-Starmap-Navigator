@@ -2,7 +2,7 @@
 -- NAVIGATOR SHIP - SCREEN VERSION v2.0.0
 -- Dual Universe Navigation System
 --
--- SLOT CONNECTIONS:
+-- SLOT CONNECTIONS (connect in this order):
 --   Slot 0: screen     (Screen Unit)
 --   Slot 1: databank   (Databank)
 --   Slot 2: core       (Dynamic Core Unit)
@@ -54,7 +54,7 @@ function BuildShipID()
   return name
 end
 function SetStatus(msg,dur)
-  StatusMsg=msg; StatusExpiry=os.clock()+(dur or 5)
+  StatusMsg=msg; StatusExpiry=system.getTime()+(dur or 5)
   system.print("[NAV] "..msg)
 end
 
@@ -64,6 +64,7 @@ slot=-1
 event=onStart()
 args=
 ]]
+
 local VERSION="v2.0.0"
 BaseChannel ="NavBase" --export: Personal base channel
 OrgChannel1 ="NavOrg"  --export: Org base channel 1
@@ -268,7 +269,7 @@ end
 
 -- ── Navigation ───────────────────────────────────────────────
 function GetCurrentPos()
-  if core then local p=core.getConstructWorldPos(); if p then return {x=p[1],y=p[2],z=p[3]} end end
+  local p=construct.getWorldPosition(); if p then return {x=p[1],y=p[2],z=p[3]} end
   return nil
 end
 function GetCurrentPosStr()
@@ -276,8 +277,12 @@ function GetCurrentPosStr()
   return string.format("::pos{0,0,%.4f,%.4f,%.4f}",p.x,p.y,p.z)
 end
 function UpdateWaypoint()
-  if NavTarget and NavTarget.c then system.setWaypoint(NavTarget.c)
-  else system.setWaypoint("") end
+  if NavTarget and NavTarget.c and NavTarget.c~="" then
+    system.setWaypoint(NavTarget.c)
+  end
+end
+function ClearWaypoint()
+  NavTarget=nil; system.setWaypoint(""); SaveData()
 end
 
 function SetNavWP(name,tab)
@@ -411,7 +416,7 @@ function BuildScreenScript()
   local S={}
   S[1]=string.format([[
 local json=require('dkjson')
-local C=32 local SW,SH=1024,576
+local C=32 local SW,SH=getResolution()
 local ScrollWP=%d local ScrollRT=%d
 local SelWP=%q local SelRT=%q local SelStop=%d
 local nName=%q local nDist=%q local nCoord=%q local nType=%q
@@ -693,14 +698,14 @@ event=onTimer(tag)
 args="nav_tick"
 ]]
 CurrentPos=GetCurrentPos()
-if StatusMsg~="" and os.clock()>StatusExpiry then StatusMsg="" end
+if StatusMsg~="" and system.getTime()>StatusExpiry then StatusMsg="" end
 UpdateWaypoint()
 DrawScreen()
 
 
 --[[@
 slot=0
-event=onMouseUp(x,y)
+event=onMouseDown(x,y)
 args=*,*
 ]]
 local raw=screen.getScriptOutput()
@@ -718,7 +723,7 @@ elseif act=="nav_wp"    then SetNavWP(d[2],ActiveTab)
 elseif act=="nav_rt"    then SetNavRoute(d[2],ActiveTab,1)
 elseif act=="next_stop" then NextStop()
 elseif act=="prev_stop" then PrevStop()
-elseif act=="clear_nav" then NavTarget=nil;SaveData();UpdateWaypoint();SetStatus("Nav cleared")
+elseif act=="clear_nav" then ClearWaypoint();SetStatus("Nav cleared")
 elseif act=="mark_wp"   then MarkWP()
 elseif act=="mark_stop" then MarkRouteStop()
 elseif act=="sync"      then
@@ -929,7 +934,7 @@ if lo=="nav" then
 end
 
 if lo=="nav off" or lo=="nav clear" then
-  NavTarget=nil; SaveData(); UpdateWaypoint(); SetStatus("Nav cleared"); DrawScreen(); return
+  ClearWaypoint(); SetStatus("Nav cleared"); DrawScreen(); return
 end
 
 if lo=="next" then NextStop(); DrawScreen(); return end
