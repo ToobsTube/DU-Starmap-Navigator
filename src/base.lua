@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR PERSONAL BASE v2.1.0
+-- NAVIGATOR PERSONAL BASE v2.2.0
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS (connect in this order):
@@ -11,11 +11,9 @@
 -- Screen script is embedded — no separate screen file needed.
 -- Paste nothing into the Screen; the PB pushes the render script.
 --
--- WP TAB SYSTEM:
---   OrgTabs = "Alliance,Corp"  (comma-separated prefixes)
---   Ships set OrgTag = "Alliance" → their WPs push as "Alliance-Name"
---   Base sorts WPs into tabs by matching prefix.
---   Untagged WPs → Personal tab.
+-- TAB SYSTEM:
+--   Personal tab holds your WPs and routes.
+--   Org tabs are created automatically when ships push org data here.
 -- ================================================================
 
 --[[@
@@ -38,14 +36,14 @@ local SelStop = input.selStop or 0
 local Status  = input.status  or ""
 local Sending = input.sending or false
 local ack     = input.ack     or false
+local ActiveTab = input.activeTab or "Personal"
 
 -- Screen-side state survives via output round-trip
 if not _S then
-  _S={tab=Tabs[1] or "Personal", scrollWP=0, scrollRT=0,
-      action="", acked=false}
+  _S={tab=ActiveTab, scrollWP=0, scrollRT=0, action="", acked=false}
 end
 if ack then _S.action="" end
-if input.tab and input.tab~="" then _S.tab=input.tab end
+if _S.tab~=ActiveTab then _S.tab=ActiveTab; _S.scrollWP=0; _S.scrollRT=0 end
 
 local function setAct(a) if _S.action=="" then _S.action=a end end
 
@@ -278,7 +276,7 @@ end
 
 setOutput(json.encode({action=_S.action, tab=_S.tab,
   scrollWP=_S.scrollWP, scrollRT=_S.scrollRT}))
-requestAnimationFrame(1)
+requestAnimationFrame(2)
 ]]
 
 
@@ -295,7 +293,7 @@ function ParsePos(s)
   return nil
 end
 function SetStatus(msg,dur)
-  StatusMsg=msg; StatusExpiry=system.getTime()+(dur or 6)
+  StatusMsg=msg; StatusExpiry=system.getArkTime()+(dur or 6)
   system.print("[BASE] "..msg)
 end
 function AutoName(prefix,list)
@@ -307,39 +305,6 @@ function AutoName(prefix,list)
   end
 end
 
--- ── Tab/prefix helpers ────────────────────────────────────────
--- Returns the tab name for a WP/route name given the known prefix list.
--- "Alliance-HomeBase" with prefix "Alliance" → tab="Alliance", short="HomeBase"
--- No matching prefix → tab="Personal", short=name
-function GetTab(name)
-  for _,pfx in ipairs(TabList) do
-    if name:sub(1,#pfx+1):lower()==pfx:lower().."-" then
-      return pfx, name:sub(#pfx+2)
-    end
-  end
-  return "Personal", name
-end
-
--- Filter WaypointList to the current tab, returning display names (prefix stripped)
-function WPsForTab(tab)
-  local out={}
-  for _,wp in ipairs(WaypointList) do
-    local t,short=GetTab(wp.n)
-    if t==tab then table.insert(out,{n=short,c=wp.c,full=wp.n}) end
-  end
-  return out
-end
-
--- Filter RouteList to the current tab
-function RoutesForTab(tab)
-  local out={}
-  for _,r in ipairs(RouteList) do
-    local t,short=GetTab(r.n)
-    if t==tab then table.insert(out,{n=short,pts=r.pts,full=r.n}) end
-  end
-  return out
-end
-
 
 --[[@
 slot=-1
@@ -347,12 +312,18 @@ event=onStart()
 args=
 ]]
 
-local VERSION="v2.1.0"
+local VERSION="v2.2.0"
 BaseChannel = "NavBase" --export: Channel ships use to reach this base
-OrgTabs     = ""        --export: Comma-separated org prefixes e.g. "Alliance,Corp"
 
 WaypointList = {}
 RouteList    = {}
+OrgNames     = {}   -- ordered list of org names
+OrgData      = {}   -- {[name]={channel,wps,routes}}
+PullQueue    = {}   -- [{org,channel},...] for syncorgs (legacy, unused)
+PullQueueIdx = 1
+PullOrgName  = nil  -- org currently being pulled (syncorgs)
+PullStaging  = nil  -- {wps,routes} staging buffer for current pull
+PushOrgName  = nil  -- org context during a ship→base push with org data
 SelWP        = ""   -- full name (with prefix)
 SelRoute     = ""   -- full name (with prefix)
 SelStop      = 0
@@ -362,25 +333,61 @@ SendQueue    = {}
 SendIndex    = 1
 Sending      = false
 pending_ack  = false
+LastScreenOut= ""
 
--- Build tab list from OrgTabs export
-TabList = {"Personal"}
-for pfx in (OrgTabs..","):gmatch("([^,]+),") do
-  local p=Trim(pfx)
-  if p~="" then table.insert(TabList,p) end
-end
 
 function LoadData()
-  if not databank then WaypointList={};RouteList={};return end
+  if not databank then WaypointList={};RouteList={};OrgNames={};OrgData={};return end
   local function jd(k) local v=databank.getStringValue(k); return (v and v~="") and json.decode(v) or nil end
-  WaypointList = jd("waypoints") or {}
-  RouteList    = jd("routes")    or {}
+  WaypointList = jd("waypoints")  or {}
+  RouteList    = jd("routes")     or {}
+  OrgNames     = jd("org_names")  or {}
+  OrgData      = {}
+  for _,org in ipairs(OrgNames) do
+    local ch  = databank.getStringValue("org_"..org.."_ch")  or ""
+    local wps = jd("org_"..org.."_wps") or {}
+    local rts = jd("org_"..org.."_rts") or {}
+    OrgData[org] = {channel=ch, wps=wps, routes=rts}
+  end
 end
 
 function SaveData()
   if not databank then return end
-  databank.setStringValue("waypoints",json.encode(WaypointList))
-  databank.setStringValue("routes",   json.encode(RouteList))
+  databank.setStringValue("waypoints", json.encode(WaypointList))
+  databank.setStringValue("routes",    json.encode(RouteList))
+  databank.setStringValue("org_names", json.encode(OrgNames))
+  for _,org in ipairs(OrgNames) do
+    local od=OrgData[org]
+    if od then
+      databank.setStringValue("org_"..org.."_ch",  od.channel or "")
+      databank.setStringValue("org_"..org.."_wps", json.encode(od.wps    or {}))
+      databank.setStringValue("org_"..org.."_rts", json.encode(od.routes or {}))
+    end
+  end
+end
+
+function UpdateChannels()
+  if not receiver then return end
+  local chs={BaseChannel}
+  for _,org in ipairs(OrgNames) do
+    local od=OrgData[org]
+    if od and od.channel~="" then table.insert(chs,od.channel) end
+  end
+  receiver.setChannelList(chs)
+end
+
+function StartNextOrgPull()
+  if PullQueueIdx>#PullQueue then
+    system.print("[BASE] All org syncs complete")
+    SetStatus("All orgs synced"); PushState(); return
+  end
+  if Sending then unit.setTimer("next_org_pull",2); return end
+  local entry=PullQueue[PullQueueIdx]
+  PullOrgName=nil; PullStaging={wps={},routes={}}
+  system.print("[BASE] Pulling org: "..entry.channel)
+  SetStatus("Syncing org: "..entry.org)
+  emitter.send(entry.channel,"<RequestSync>BASE|pid:0")
+  PushState()
 end
 
 -- ── WP management ────────────────────────────────────────────
@@ -506,6 +513,18 @@ function StartSend(requester)
   for _,r in ipairs(RouteList) do
     table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}})
   end
+  for _,org in ipairs(OrgNames) do
+    local od=OrgData[org]
+    if od and od.channel~="" and (#od.wps>0 or #od.routes>0) then
+      table.insert(SendQueue,{type="org_hdr",msg="<OrgSyncStart>"..org.."|ch:"..od.channel})
+      for _,wp in ipairs(od.wps) do
+        table.insert(SendQueue,{type="wp",data={n=wp.n,c=wp.c}})
+      end
+      for _,r in ipairs(od.routes) do
+        table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}})
+      end
+    end
+  end
   SendIndex=1; Sending=true
   emitter.send(BaseChannel,"<SyncCount>"..#SendQueue)
   unit.setTimer("send_tick",0.2)
@@ -514,31 +533,44 @@ function StartSend(requester)
 end
 
 -- ── Screen push ───────────────────────────────────────────────
+function GetTabList()
+  local t={"Personal"}
+  for _,o in ipairs(OrgNames) do table.insert(t,o) end
+  return t
+end
+
+function GetTabWPs()
+  if ActiveTab=="Personal" then return WaypointList end
+  local od=OrgData[ActiveTab]
+  return od and od.wps or {}
+end
+
+function GetTabRoutes()
+  if ActiveTab=="Personal" then return RouteList end
+  local od=OrgData[ActiveTab]
+  return od and od.routes or {}
+end
+
 function PushState()
   if not screen then return end
-  -- Build filtered lists for the active tab (strip prefix from display names)
-  local dispWPs   = WPsForTab(ActiveTab)
-  local dispRTs   = RoutesForTab(ActiveTab)
-  -- Resolve stops for selected route (using full name)
+  local dispWPs = GetTabWPs()
+  local dispRTs = GetTabRoutes()
   local selRoutePts={}
   if SelRoute~="" then
-    for _,r in ipairs(RouteList) do if r.n==SelRoute then selRoutePts=r.pts;break end end
+    for _,r in ipairs(dispRTs) do if r.n==SelRoute then selRoutePts=r.pts;break end end
   end
-  -- Convert SelWP/SelRoute to short name for screen display
-  local _,selWPShort   = GetTab(SelWP)
-  local _,selRTShort   = GetTab(SelRoute)
   screen.setScriptInput(json.encode({
-    tabs    = TabList,
-    tab     = ActiveTab,
-    wps     = dispWPs,
-    routes  = dispRTs,
-    stops   = selRoutePts,
-    selWP   = selWPShort,
-    selRT   = selRTShort,
-    selStop = SelStop,
-    status  = StatusMsg,
-    sending = Sending,
-    ack     = pending_ack,
+    tabs      = GetTabList(),
+    activeTab = ActiveTab,
+    wps       = dispWPs,
+    routes    = dispRTs,
+    stops     = selRoutePts,
+    selWP     = SelWP,
+    selRT     = SelRoute,
+    selStop   = SelStop,
+    status    = StatusMsg,
+    sending   = Sending,
+    ack       = pending_ack,
   }))
   pending_ack=false
   screen.setRenderScript(ScreenScript)
@@ -546,12 +578,12 @@ end
 
 -- ── Init ──────────────────────────────────────────────────────
 LoadData()
-if receiver then receiver.setChannelList({BaseChannel}) end
+UpdateChannels()
 unit.setTimer("heartbeat",30)
-unit.setTimer("tick",0.05)
 unit.setTimer("screen_init",1)
+unit.setTimer("screen_poll",0.05)
 system.print("=== Nav Base "..VERSION.." ===  WPs:"..#WaypointList.."  Routes:"..#RouteList)
-system.print("Tabs: "..table.concat(TabList,", "))
+system.print("Orgs cached: "..#OrgNames)
 if screen then screen.activate() end
 PushState()
 
@@ -590,6 +622,8 @@ if item.type=="wp" then
   emitter.send(BaseChannel,"<SyncWP>"..json.encode(item.data):gsub('"',"@@@"))
 elseif item.type=="route" then
   emitter.send(BaseChannel,"<SyncRoute>"..json.encode(item.data):gsub('"',"@@@"))
+elseif item.type=="org_hdr" then
+  emitter.send(BaseChannel,item.msg)
 end
 SendIndex=SendIndex+1
 
@@ -599,19 +633,28 @@ slot=-1
 event=onTimer(tag)
 args="heartbeat"
 ]]
-if StatusMsg~="" and system.getTime()>StatusExpiry then StatusMsg=""; PushState() end
-system.print("[BASE] Alive  WPs:"..#WaypointList.."  Routes:"..#RouteList)
+if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg=""; PushState() end
+system.print("[BASE] Alive  WPs:"..#WaypointList.."  Routes:"..#RouteList.."  Orgs:"..#OrgNames)
 
 
 --[[@
 slot=-1
 event=onTimer(tag)
-args="tick"
+args="next_org_pull"
+]]
+unit.stopTimer("next_org_pull")
+StartNextOrgPull()
+
+
+--[[@
+slot=-1
+event=onTimer(tag)
+args="screen_poll"
 ]]
 if not screen then return end
 local raw=screen.getScriptOutput()
-if not raw or raw=="" then return end
-screen.clearScriptOutput()
+if not raw or raw=="" or raw==LastScreenOut then return end
+LastScreenOut=raw
 local ok,d=pcall(json.decode,raw)
 if not ok or type(d)~="table" then return end
 
@@ -628,51 +671,66 @@ ok2,act=pcall(json.decode,d.action)
 if not ok2 or type(act)~="table" then PushState(); return end
 local cmd=act[1]
 
--- Tab switch comes through action channel too (belt-and-suspenders)
 if cmd=="tab" then
   ActiveTab=act[2]; SelWP=""; SelRoute=""; SelStop=0
 
--- WP selection — screen sends short name; resolve to full name
 elseif cmd=="selwp" then
-  local tab,_ = ActiveTab,act[2]
-  local pfx=(tab=="Personal") and "" or tab.."-"
-  local full=pfx..act[2]
-  SelWP=(SelWP:lower()==full:lower() and "" or full)
+  SelWP=(SelWP==act[2] and "" or act[2])
   SelRoute=""; SelStop=0
 
--- Route selection — same short→full resolution
 elseif cmd=="selrt" then
-  local pfx=(ActiveTab=="Personal") and "" or ActiveTab.."-"
-  local full=pfx..act[2]
-  if SelRoute:lower()==full:lower() then
-    SelStop=(SelStop==0 and 1 or 0)
-  else SelRoute=full; SelStop=0; SelWP="" end
+  if SelRoute==act[2] then SelStop=(SelStop==0 and 1 or 0)
+  else SelRoute=act[2]; SelStop=0; SelWP="" end
 
-elseif cmd=="selstop"     then SelStop=(SelStop==act[2] and 0 or act[2])
+elseif cmd=="selstop" then SelStop=(SelStop==act[2] and 0 or act[2])
 
 elseif cmd=="delete" then
-  if SelWP~=""  then DelWP(SelWP); SelWP=""
-  elseif SelRoute~="" and SelStop>0 then DelStop(SelRoute,SelStop); SelStop=0
-  elseif SelRoute~="" then DelRoute(SelRoute); SelRoute=""; SelStop=0 end
+  if SelWP~="" then
+    if ActiveTab=="Personal" then DelWP(SelWP); SelWP=""
+    else
+      local od=OrgData[ActiveTab]
+      if od then
+        for i,wp in ipairs(od.wps) do if wp.n==SelWP then table.remove(od.wps,i); break end end
+        SaveData(); SetStatus("Deleted WP: "..SelWP); SelWP=""
+      end
+    end
+  elseif SelRoute~="" and SelStop>0 then
+    if ActiveTab=="Personal" then DelStop(SelRoute,SelStop); SelStop=0
+    else
+      local od=OrgData[ActiveTab]
+      if od then
+        for _,r in ipairs(od.routes) do
+          if r.n==SelRoute then table.remove(r.pts,SelStop); break end
+        end
+        SaveData(); SetStatus("Stop removed"); SelStop=0
+      end
+    end
+  elseif SelRoute~="" then
+    if ActiveTab=="Personal" then DelRoute(SelRoute); SelRoute=""; SelStop=0
+    else
+      local od=OrgData[ActiveTab]
+      if od then
+        for i,r in ipairs(od.routes) do if r.n==SelRoute then table.remove(od.routes,i); break end end
+        SaveData(); SetStatus("Deleted route: "..SelRoute); SelRoute=""; SelStop=0
+      end
+    end
+  end
 
 elseif cmd=="clearwps" then
-  -- Only clear WPs belonging to the active tab
-  local keep={}
-  for _,wp in ipairs(WaypointList) do
-    local t=GetTab(wp.n)
-    if t~=ActiveTab then table.insert(keep,wp) end
+  if ActiveTab=="Personal" then
+    WaypointList={}; SelWP=""; SaveData(); SetStatus("Cleared personal WPs")
+  else
+    local od=OrgData[ActiveTab]
+    if od then od.wps={}; SelWP=""; SaveData(); SetStatus("Cleared WPs: "..ActiveTab) end
   end
-  WaypointList=keep; SelWP=""; SaveData()
-  SetStatus("Cleared WPs for tab: "..ActiveTab)
 
 elseif cmd=="clearroutes" then
-  local keep={}
-  for _,r in ipairs(RouteList) do
-    local t=GetTab(r.n)
-    if t~=ActiveTab then table.insert(keep,r) end
+  if ActiveTab=="Personal" then
+    RouteList={}; SelRoute=""; SelStop=0; SaveData(); SetStatus("Cleared personal routes")
+  else
+    local od=OrgData[ActiveTab]
+    if od then od.routes={}; SelRoute=""; SelStop=0; SaveData(); SetStatus("Cleared routes: "..ActiveTab) end
   end
-  RouteList=keep; SelRoute=""; SelStop=0; SaveData()
-  SetStatus("Cleared routes for tab: "..ActiveTab)
 
 elseif cmd=="hint_add"      then SetStatus("Chat: add NAME ::pos{0,0,x,y,z}",8)
 elseif cmd=="hint_rename"   then SetStatus("Chat: rename NEWNAME",8)
@@ -688,11 +746,92 @@ slot=2
 event=onReceived(channel,message)
 args=*,*
 ]]
+-- Org channel responses (from org sync PBs during syncorgs pull)
+if channel~=BaseChannel then
+  if message:find("<OrgName>",1,true) then
+    local orgName=Trim(message:gsub("<OrgName>",""))
+    -- Find which pull queue entry this channel belongs to and resolve real org name
+    for _,e in ipairs(PullQueue) do
+      if e.channel==channel then
+        if orgName~=e.org then
+          -- Real org name differs from placeholder — rename the OrgNames entry
+          local found=false
+          for i,o in ipairs(OrgNames) do
+            if o==e.org then OrgNames[i]=orgName; OrgData[orgName]=OrgData[e.org]; OrgData[e.org]=nil; found=true; break end
+          end
+          if not found then OrgData[orgName]={channel=channel,wps={},routes={}} end
+          e.org=orgName
+        end
+        PullOrgName=orgName
+        PullStaging={wps={},routes={}}
+        system.print("[BASE] Org pull: "..channel.." → "..orgName)
+        break
+      end
+    end
+  elseif message:find("<SyncWP>",1,true) and PullOrgName and PullStaging then
+    local raw=message:gsub("<SyncWP>",""):gsub("@@@",'"')
+    local ok,wp=pcall(json.decode,raw)
+    if ok and wp and wp.n and wp.c then table.insert(PullStaging.wps,{n=wp.n,c=wp.c}) end
+  elseif message:find("<SyncRoute>",1,true) and PullOrgName and PullStaging then
+    local raw=message:gsub("<SyncRoute>",""):gsub("@@@",'"')
+    local ok,r=pcall(json.decode,raw)
+    if ok and r and r.n then table.insert(PullStaging.routes,r) end
+  elseif message:find("<SyncComplete>",1,true) and PullOrgName then
+    table.sort(PullStaging.wps,    function(a,b) return a.n:lower()<b.n:lower() end)
+    table.sort(PullStaging.routes, function(a,b) return a.n:lower()<b.n:lower() end)
+    if not OrgData[PullOrgName] then OrgData[PullOrgName]={} end
+    OrgData[PullOrgName].channel = channel
+    OrgData[PullOrgName].wps     = PullStaging.wps
+    OrgData[PullOrgName].routes  = PullStaging.routes
+    local n=#PullStaging.wps; local m=#PullStaging.routes
+    system.print("[BASE] Org pull done: "..PullOrgName.."  WPs:"..n.."  Routes:"..m)
+    SaveData(); PushState()
+    PullOrgName=nil; PullStaging=nil
+    PullQueueIdx=PullQueueIdx+1
+    SetStatus("Org synced: "..(n+m).." items")
+    unit.setTimer("next_org_pull",1)
+  end
+  return
+end
+
+-- BaseChannel messages
+if message:find("<OrgSyncStart>",1,true) then
+  local body=message:gsub("<OrgSyncStart>","")
+  local orgName=body:match("^(.+)|ch:") or body
+  local orgCh=body:match("|ch:(.+)$") or ""
+  -- Ensure org entry exists
+  local found=false
+  for _,o in ipairs(OrgNames) do if o==orgName then found=true; break end end
+  if not found then
+    -- Check if an entry with this channel exists under a different name
+    for i,o in ipairs(OrgNames) do
+      if OrgData[o] and OrgData[o].channel==orgCh then
+        OrgData[orgName]=OrgData[o]; OrgData[o]=nil; OrgNames[i]=orgName; found=true; break
+      end
+    end
+    if not found then
+      table.insert(OrgNames,orgName)
+      OrgData[orgName]={channel=orgCh,wps={},routes={}}
+    end
+  end
+  if OrgData[orgName] then OrgData[orgName].channel=orgCh end
+  PushOrgName=orgName
+  system.print("[BASE] Incoming org data: "..orgName)
+end
+
 if message:find("<PushWP>",1,true) then
   local raw=message:gsub("<PushWP>",""):gsub("@@@",'"')
   local ok,wp=pcall(json.decode,raw)
   if ok and wp and wp.n and wp.c then
-    MergeWP(wp.n,wp.c); SetStatus("Received WP: "..wp.n); PushState()
+    if PushOrgName and OrgData[PushOrgName] then
+      local list=OrgData[PushOrgName].wps
+      local found=false
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      if not found then table.insert(list,{n=wp.n,c=wp.c}) end
+    else
+      MergeWP(wp.n,wp.c)
+    end
+    SetStatus("Received WP: "..wp.n); PushState()
   end
 end
 
@@ -700,13 +839,32 @@ if message:find("<PushRoute>",1,true) then
   local raw=message:gsub("<PushRoute>",""):gsub("@@@",'"')
   local ok,r=pcall(json.decode,raw)
   if ok and r and r.n then
-    MergeRoute(r); SetStatus("Received route: "..r.n); PushState()
+    if PushOrgName and OrgData[PushOrgName] then
+      local list=OrgData[PushOrgName].routes
+      local found=false
+      for i,e in ipairs(list) do if e.n:lower()==r.n:lower() then list[i]=r;found=true;break end end
+      if not found then table.insert(list,r) end
+    else
+      MergeRoute(r)
+    end
+    SetStatus("Received route: "..r.n); PushState()
   end
+end
+
+if message:find("<SyncComplete>",1,true) then
+  if PushOrgName and OrgData[PushOrgName] then
+    table.sort(OrgData[PushOrgName].wps,    function(a,b) return a.n:lower()<b.n:lower() end)
+    table.sort(OrgData[PushOrgName].routes, function(a,b) return a.n:lower()<b.n:lower() end)
+    system.print("[BASE] Org push complete: "..PushOrgName)
+    PushOrgName=nil
+  end
+  SaveData(); PushState()
 end
 
 if message:find("<RequestSync>",1,true) then
   if Sending then return end
   local who=message:gsub("<RequestSync>","")
+  PushOrgName=nil  -- reset context for new sync session
   StartSend(who)
 end
 
@@ -718,34 +876,29 @@ args=*
 ]]
 local t=Trim(text); local lo=t:lower()
 
--- Chat commands use the active tab prefix automatically.
--- For org tabs, prefix is prepended to names automatically.
-local function TabPrefix()
-  return (ActiveTab=="Personal") and "" or ActiveTab.."-"
-end
-
 if lo=="help" then
   system.print("══════════════════════════════════")
-  system.print("  NAV BASE v2.1  CHAT COMMANDS")
+  system.print("  NAV BASE v2.2  CHAT COMMANDS")
   system.print("══════════════════════════════════")
-  system.print("add NAME ::pos{..}  add/update WP (prefixed for active tab)")
+  system.print("add NAME ::pos{..}  add/update WP on active tab")
   system.print("del                 delete selected item")
   system.print("rename NEWNAME      rename selected item")
   system.print("setpos ::pos{..}    update selected WP coords")
-  system.print("newroute NAME       create route (prefixed for active tab)")
+  system.print("newroute NAME       create route on active tab")
   system.print("addstop WPname      add stop to selected route")
   system.print("addstop ::pos{..}   add raw pos stop")
   system.print("delstop N           remove stop N")
   system.print("list                list waypoints on active tab")
   system.print("routes              list routes on active tab")
   system.print("tab NAME            switch active tab")
+  system.print("listorgs            show cached orgs and counts")
   return
 end
 
 local tabN=t:match("^[Tt][Aa][Bb]%s+(.+)")
 if tabN then
   tabN=Trim(tabN)
-  for _,tn in ipairs(TabList) do
+  for _,tn in ipairs(GetTabList()) do
     if tn:lower()==tabN:lower() then
       ActiveTab=tn; SelWP=""; SelRoute=""; SelStop=0
       SetStatus("Tab: "..ActiveTab); PushState(); return
@@ -754,24 +907,51 @@ if tabN then
   SetStatus("Unknown tab: "..tabN); PushState(); return
 end
 
-local addN,addC=t:match("^[Aa][Dd][Dd]%s+(%S+)%s*(.*)")
+local addN,addC=t:match("^[Aa][Dd][Dd]%s+(.-)%s*(::pos%b{})")
 if addN then
   addC=Trim(addC)
-  if ParsePos(addC) then AddWP(TabPrefix()..addN,addC)
-  else SetStatus("Provide coords: add NAME ::pos{0,0,x,y,z}",8) end
+  if not ParsePos(addC) then SetStatus("Provide coords: add NAME ::pos{0,0,x,y,z}",8); PushState(); return end
+  if ActiveTab=="Personal" then AddWP(addN,addC)
+  else
+    local od=OrgData[ActiveTab]
+    if od then
+      local found=false
+      for _,wp in ipairs(od.wps) do if wp.n:lower()==addN:lower() then wp.c=addC;found=true;break end end
+      if not found then table.insert(od.wps,{n=addN,c=addC}) end
+      SaveData(); SetStatus("Saved WP: "..addN)
+    end
+  end
   PushState(); return
 end
 
 local nrN=t:match("^[Nn][Ee][Ww][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
-if nrN then AddRoute(TabPrefix()..Trim(nrN)); PushState(); return end
+if nrN then
+  nrN=Trim(nrN)
+  if ActiveTab=="Personal" then AddRoute(nrN)
+  else
+    local od=OrgData[ActiveTab]
+    if od then table.insert(od.routes,{n=nrN,pts={}}); SaveData(); SetStatus("Route created: "..nrN) end
+  end
+  PushState(); return
+end
 
 local rnN=t:match("^[Rr][Ee][Nn][Aa][Mm][Ee]%s+(.+)")
 if rnN then
   rnN=Trim(rnN)
-  local newFull=TabPrefix()..rnN
-  if SelWP~="" then RenameWP(SelWP,newFull)
-  elseif SelRoute~="" then RenameRoute(SelRoute,newFull)
-  else SetStatus("Select a WP or route first") end
+  if ActiveTab=="Personal" then
+    if SelWP~="" then RenameWP(SelWP,rnN)
+    elseif SelRoute~="" then RenameRoute(SelRoute,rnN)
+    else SetStatus("Select a WP or route first") end
+  else
+    local od=OrgData[ActiveTab]
+    if od and SelWP~="" then
+      for _,wp in ipairs(od.wps) do if wp.n==SelWP then wp.n=rnN;SelWP=rnN;break end end
+      SaveData(); SetStatus("Renamed to: "..rnN)
+    elseif od and SelRoute~="" then
+      for _,r in ipairs(od.routes) do if r.n==SelRoute then r.n=rnN;SelRoute=rnN;break end end
+      SaveData(); SetStatus("Renamed to: "..rnN)
+    else SetStatus("Select a WP or route first") end
+  end
   PushState(); return
 end
 
@@ -792,8 +972,25 @@ end
 
 local asA=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.*)")
 if asA then
-  if SelRoute=="" then SetStatus("Select a route first")
-  else AddStop(SelRoute,Trim(asA)) end
+  asA=Trim(asA)
+  if SelRoute=="" then SetStatus("Select a route first"); PushState(); return end
+  if ActiveTab=="Personal" then AddStop(SelRoute,asA)
+  else
+    local od=OrgData[ActiveTab]
+    if od then
+      for _,r in ipairs(od.routes) do
+        if r.n==SelRoute then
+          local c,lbl=asA,asA
+          if not ParsePos(asA) then
+            local found=false
+            for _,wp in ipairs(od.wps) do if wp.n:lower()==asA:lower() then c=wp.c;lbl=wp.n;found=true;break end end
+            if not found then SetStatus("Not a WP name or ::pos{}"); PushState(); return end
+          end
+          table.insert(r.pts,{c=c,label=lbl}); SaveData(); SetStatus("Stop added"); break
+        end
+      end
+    end
+  end
   PushState(); return
 end
 
@@ -813,18 +1010,27 @@ if lo=="del" then
 end
 
 if lo=="list" then
-  local wps=WPsForTab(ActiveTab)
+  local wps=GetTabWPs()
   system.print("─── WAYPOINTS ["..ActiveTab.."] ("..#wps..") ───")
   for i,wp in ipairs(wps) do system.print(i..".  "..wp.n.."  "..wp.c) end
   return
 end
 
 if lo=="routes" then
-  local rts=RoutesForTab(ActiveTab)
+  local rts=GetTabRoutes()
   system.print("─── ROUTES ["..ActiveTab.."] ("..#rts..") ───")
   for i,r in ipairs(rts) do
     system.print(i..".  "..r.n.."  ("..#r.pts.." stops)")
     for j,s in ipairs(r.pts) do system.print("    "..j..".  "..(s.label or s.c)) end
+  end
+  return
+end
+
+if lo=="listorgs" then
+  system.print("─── ORG CACHE ("..(#OrgNames)..") ───")
+  for _,o in ipairs(OrgNames) do
+    local od=OrgData[o] or {}
+    system.print("  "..o.."  ch:"..(od.channel or "?").."  WPs:"..(#(od.wps or {})).."  Routes:"..(#(od.routes or {})))
   end
   return
 end

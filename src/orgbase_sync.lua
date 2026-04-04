@@ -36,40 +36,78 @@ OrgChannel      = "NavOrg"   -- fallback; overridden by databank
 OrgName         = "Org"      -- fallback; overridden by databank
 WaypointList    = {}
 RouteList       = {}
+Whitelist       = {}  -- {[playerID]=displayName}
 SendQueue       = {}
 SendIndex       = 1
 Sending         = false
 RequestCount    = 0
 LastRequester   = "---"
+DeniedCount     = 0
+PendingSession  = nil  -- {pid,shipID,count,received} — active unwhitelisted push
 
 function LoadData()
   if not databank then WaypointList={};RouteList={};return end
   local function jd(k) local v=databank.getStringValue(k); return (v and v~="") and json.decode(v) or nil end
   WaypointList = jd("waypoints") or {}
   RouteList    = jd("routes")    or {}
+  Whitelist    = jd("org_whitelist") or {}
   local ch=databank.getStringValue("org_channel")
   if ch and ch~="" then OrgChannel=ch end
   local nm=databank.getStringValue("org_name")
   if nm and nm~="" then OrgName=nm end
 end
 
-function StartSend(requester)
+function IsWhitelisted(pid)
+  return Whitelist[pid]~=nil
+end
+
+function ParsePID(msg)
+  return msg:match("|pid:(%d+)") or "0"
+end
+
+function ParsePlayerName(msg)
+  return msg:match("|pname:([^|]+)") or "Unknown"
+end
+
+function ParseShipID(msg)
+  return msg:match("^(.+)|pid:") or msg
+end
+
+function LoadPending()
+  if not databank then return {},{}  end
+  local function jd(k) local v=databank.getStringValue(k); return (v and v~="") and json.decode(v) or nil end
+  return jd("pending_wps") or {}, jd("pending_routes") or {}
+end
+
+function SavePendingItem(item)
+  if not databank then return end
+  local function jd(k) local v=databank.getStringValue(k); return (v and v~="") and json.decode(v) or nil end
+  if item.type=="wp" then
+    local pws=jd("pending_wps") or {}
+    table.insert(pws,item); databank.setStringValue("pending_wps",json.encode(pws))
+  elseif item.type=="route" then
+    local prs=jd("pending_routes") or {}
+    table.insert(prs,item); databank.setStringValue("pending_routes",json.encode(prs))
+  end
+end
+
+function StartSend(requester, targetChannel)
   LoadData()
+  local ch=targetChannel or OrgChannel
   SendQueue={}
-  -- First packet: org name so the ship knows where to file this data
   for _,wp in ipairs(WaypointList) do
-    table.insert(SendQueue,{type="wp",   data={n=wp.n,c=wp.c}})
+    table.insert(SendQueue,{type="wp",   data={n=wp.n,c=wp.c}, ch=ch})
   end
   for _,r in ipairs(RouteList) do
-    table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}})
+    table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}, ch=ch})
   end
+  -- Prepend header messages so they go through the same queued timer
+  table.insert(SendQueue,1,{type="hdr",msg="<SyncCount>"..#SendQueue, ch=ch})
+  table.insert(SendQueue,1,{type="hdr",msg="<OrgName>"..OrgName,      ch=ch})
   SendIndex=1; Sending=true
   RequestCount=RequestCount+1; LastRequester=requester
-  -- Send org name first so ships know which bucket to file under
-  emitter.send(OrgChannel,"<OrgName>"..OrgName)
-  emitter.send(OrgChannel,"<SyncCount>"..#SendQueue)
   unit.setTimer("send_tick",0.3)
-  system.print("[ORG-SYNC] Serving "..#SendQueue.." items to: "..requester)
+  system.print("[ORG-SYNC] Serving "..(#SendQueue-2).." items to: "..requester.."  ch:"..ch)
   DrawScreen()
 end
 
@@ -81,20 +119,23 @@ end
 
 function BuildScreenScript()
   local S={}
+  local wlSize=0; for _ in pairs(Whitelist) do wlSize=wlSize+1 end
   S[1]=string.format([[
 local OrgChannel=%q
 local OrgName=%q
 local WPCount=%d
 local RTCount=%d
 local ReqCount=%d
+local DeniedCount=%d
+local WLSize=%d
 local LastReq=%q
 local IsSending=%s
 local VERSION=%q
 ]],
     OrgChannel, OrgName,
     #WaypointList, #RouteList,
-    RequestCount, LastRequester,
-    tostring(Sending), VERSION)
+    RequestCount, DeniedCount, wlSize,
+    LastRequester, tostring(Sending), VERSION)
 
   S[2]=[[
 local Lbg=createLayer() local Lpnl=createLayer() local Lln=createLayer()
@@ -136,6 +177,17 @@ setNextTextAlign(Ltit,AlignH_Center,AlignV_Middle) addText(Ltit,fTit,tostring(RT
 setNextFillColor(Ltxt,0.45,0.40,0.25,1) setNextTextAlign(Ltxt,AlignH_Center,AlignV_Middle)
 addText(Ltxt,fSm,"SYNCS SERVED",col3,rowY-16)
 setNextTextAlign(Ltit,AlignH_Center,AlignV_Middle) addText(Ltit,fTit,tostring(ReqCount),col3,rowY+14)
+-- Whitelist / denied row
+local row2Y=rowY+60
+local col4=ScrW*0.33 local col5=ScrW*0.67
+setNextFillColor(Ltxt,0.45,0.40,0.25,1) setNextTextAlign(Ltxt,AlignH_Center,AlignV_Middle)
+addText(Ltxt,fSm,"WHITELISTED",col4,row2Y-16)
+setNextTextAlign(Ltit,AlignH_Center,AlignV_Middle) addText(Ltit,fTit,tostring(WLSize),col4,row2Y+14)
+setNextFillColor(Ltxt,0.45,0.40,0.25,1) setNextTextAlign(Ltxt,AlignH_Center,AlignV_Middle)
+addText(Ltxt,fSm,"DENIED",col5,row2Y-16)
+local dc=DeniedCount>0 and 1 or 0.55
+setNextFillColor(Ltit,1.0,dc*0.56,0,1) setNextTextAlign(Ltit,AlignH_Center,AlignV_Middle)
+addText(Ltit,fTit,tostring(DeniedCount),col5,row2Y+14)
 -- Last requester / sending status
 local statusY=390
 if IsSending then
@@ -145,12 +197,17 @@ else
   setNextFillColor(Ltxt,0.40,0.35,0.20,1) setNextTextAlign(Ltxt,AlignH_Center,AlignV_Middle)
   addText(Ltxt,fSm,"Last sync: "..LastReq,ScrW/2,statusY)
 end
+-- First sync instruction
+setNextFillColor(Ltxt,0.40,0.35,0.20,1) setNextTextAlign(Ltxt,AlignH_Center,AlignV_Middle)
+addText(Ltxt,fSm,"First time on a new ship? Type in LUA chat on the ship:",ScrW/2,ScrH-88)
+setNextTextAlign(Lch,AlignH_Center,AlignV_Middle)
+addText(Lch,fTxt,"firstsync "..OrgChannel,ScrW/2,ScrH-62)
 -- Footer
 addLine(Lln,0,ScrH-40,ScrW,ScrH-40)
 setNextFillColor(Lpnl,0.04,0.02,0,0.95) addBox(Lpnl,0,ScrH-40,ScrW,40)
 setNextFillColor(Ltxt,0.40,0.30,0.12,1) setNextTextAlign(Ltxt,AlignH_Center,AlignV_Middle)
 addText(Ltxt,fSm,"Read-only sync server  |  Channel managed by Org Admin PB",ScrW/2,ScrH-20)
-requestAnimationFrame(1)
+requestAnimationFrame(2)
 ]]
   return table.concat(S)
 end
@@ -181,16 +238,21 @@ args="send_tick"
 ]]
 if not Sending then return end
 if SendIndex>#SendQueue then
-  emitter.send(OrgChannel,"<SyncComplete>")
+  local finCh=SendQueue[#SendQueue] and SendQueue[#SendQueue].ch or OrgChannel
+  emitter.send(finCh,"<SyncComplete>")
   Sending=false
+  FirstSyncTarget=nil
   system.print("[ORG-SYNC] Done ("..#SendQueue.." items)")
   DrawScreen(); return
 end
 local item=SendQueue[SendIndex]
-if item.type=="wp" then
-  emitter.send(OrgChannel,"<SyncWP>"..json.encode(item.data):gsub('"',"@@@"))
+local ch=item.ch or OrgChannel
+if item.type=="hdr" then
+  emitter.send(ch,item.msg)
+elseif item.type=="wp" then
+  emitter.send(ch,"<SyncWP>"..json.encode(item.data):gsub('"',"@@@"))
 elseif item.type=="route" then
-  emitter.send(OrgChannel,"<SyncRoute>"..json.encode(item.data):gsub('"',"@@@"))
+  emitter.send(ch,"<SyncRoute>"..json.encode(item.data):gsub('"',"@@@"))
 end
 SendIndex=SendIndex+1
 
@@ -212,8 +274,61 @@ event=onReceived(channel,message)
 args=*,*
 ]]
 if message:find("<RequestSync>",1,true) then
-  if Sending then return end  -- already serving, queue next after completion
-  local who=message:gsub("<RequestSync>","")
-  StartSend(who)
+  if Sending then return end
+  local pid=ParsePID(message)
+  local shipID=ParseShipID(message:gsub("<RequestSync>",""))
+  local label=Whitelist[pid] and (shipID.." ["..Whitelist[pid].."]") or shipID
+  StartSend(label)
 end
--- All other messages ignored — this PB never writes to the databank
+
+if message:find("<PushAuth>",1,true) then
+  local pid=ParsePID(message)
+  local pname=ParsePlayerName(message)
+  local shipID=ParseShipID(message:gsub("<PushAuth>",""))
+  local count=tonumber(message:match("|count:(%d+)")) or 0
+  if IsWhitelisted(pid) then
+    -- Whitelisted — open a normal session, items go straight through to Admin PB receiver
+    PendingSession=nil
+    system.print("[ORG-SYNC] PUSH OK (whitelisted): "..pname.." on "..shipID)
+  else
+    -- Unknown player — open a pending session to collect their items
+    PendingSession={pid=pid,pname=pname,shipID=shipID,count=count,received=0}
+    emitter.send(OrgChannel,"<PushPending>"..shipID)
+    system.print("[ORG-SYNC] PUSH QUEUED: "..pname.." on "..shipID.."  items:"..count)
+    DrawScreen()
+  end
+end
+
+if message:find("<PushWP>",1,true) then
+  if PendingSession then
+    local raw=message:gsub("<PushWP>",""):gsub("@@@",'"')
+    local ok,wp=pcall(json.decode,raw)
+    if ok and wp and wp.n and wp.c then
+      SavePendingItem({type="wp",data=wp,from=PendingSession.shipID,pname=PendingSession.pname,pid=PendingSession.pid})
+      PendingSession.received=PendingSession.received+1
+      if PendingSession.received>=PendingSession.count then
+        system.print("[ORG-SYNC] Pending complete: "..PendingSession.received.." items from "..PendingSession.pname)
+        PendingSession=nil; DrawScreen()
+      end
+    end
+  end
+  -- If no pending session, this is from a whitelisted ship — Admin PB handles it via its own receiver
+end
+
+if message:find("<PushRoute>",1,true) then
+  if PendingSession then
+    local raw=message:gsub("<PushRoute>",""):gsub("@@@",'"')
+    local ok,r=pcall(json.decode,raw)
+    if ok and r and r.n then
+      SavePendingItem({type="route",data=r,from=PendingSession.shipID,pname=PendingSession.pname,pid=PendingSession.pid})
+      PendingSession.received=PendingSession.received+1
+      if PendingSession.received>=PendingSession.count then
+        system.print("[ORG-SYNC] Pending complete: "..PendingSession.received.." items from "..PendingSession.pname)
+        PendingSession=nil; DrawScreen()
+      end
+    end
+  end
+end
+
+
+

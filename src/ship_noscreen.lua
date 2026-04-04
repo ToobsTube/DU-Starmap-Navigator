@@ -23,6 +23,35 @@ function FormatDist(m)
   elseif m>=1000 then return string.format("%.1f km",m/1000)
   else return string.format("%.0f m",m) end
 end
+function FormatTime(s)
+  if not s or s<0 then return "---" end
+  if s>=86400 then
+    local d=math.floor(s/86400); local h=math.floor((s%86400)/3600)
+    return string.format("%dd %dh",d,h)
+  elseif s>=3600 then
+    local h=math.floor(s/3600); local m=math.floor((s%3600)/60)
+    return string.format("%dh %02dm",h,m)
+  else
+    local m=math.floor(s/60); local sc=math.floor(s%60)
+    return string.format("%dm %02ds",m,sc)
+  end
+end
+function CalcTravelTime(dist)
+  if not dist or dist<=0 then return nil end
+  local V=(CalcSpeed or 30000)/3.6   -- km/h → m/s
+  local A=CalcAccel or 5
+  if A<=0 then return dist/math.max(V,1) end
+  local d_accel=V*V/(2*A)            -- distance to reach cruise speed
+  if 2*d_accel>=dist then
+    -- can't reach cruise speed — triangle profile
+    return 2*math.sqrt(dist/A)
+  else
+    local t_accel=V/A                -- time to accel (= time to decel)
+    local d_cruise=dist-2*d_accel
+    local t_cruise=d_cruise/V
+    return 2*t_accel+t_cruise
+  end
+end
 function ParsePos(s)
   if not s or s=="" then return nil end
   local w,b,x,y,z=s:match("::pos{(%d+),(%d+),([-%.%d]+),([-%.%d]+),([-%.%d]+)}")
@@ -69,7 +98,10 @@ function BuildShipID()
   if cid~="" then return name.."#"..cid:sub(-6) end
   return name
 end
-function SetStatus(msg) system.print("[NAV] "..msg) end
+function SetStatus(msg,dur)
+  system.print("[NAV] "..msg)
+  StatusMsg=msg; StatusExpiry=system.getArkTime()+(dur or 5)
+end
 
 
 --[[@
@@ -81,10 +113,14 @@ args=
 local VERSION="v2.0.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
-OrgTag      =""        --export: Org prefix for WPs e.g. "Alliance" (blank = personal)
-OrgChannel1 ="NavOrg"  --export: Org base channel 1
-OrgChannel2 =""        --export: Org base channel 2 (optional)
-OrgChannel3 =""        --export: Org base channel 3 (optional)
+AutopilotCmd=""        --export: Autopilot command prefix e.g. /goto or / (blank = disabled)
+CalcSpeed   =30000    --export: Time Calc cruise speed in km/h (e.g. 30000)
+CalcAccel   =5        --export: Time Calc ship acceleration in m/s2 (e.g. 5)
+AccentR=0    --export: HUD accent color Red 0-255 (default 0)
+AccentG=200  --export: HUD accent color Green 0-255 (default 200)
+AccentB=255  --export: HUD accent color Blue 0-255 (default 255)
+HudX=13     --export: HUD left position in % from screen edge (default 13)
+HudY=15     --export: HUD top position in % from screen edge (default 15)
 
 PersonalWPs    = {}
 PersonalRoutes = {}
@@ -94,11 +130,23 @@ NavTarget      = nil
 ShipID         = ""
 SyncReceived   = 0
 SyncOrgName    = ""
-MenuIndex      = 0   -- keyboard cursor position
 ActiveContext  = "personal"  -- "personal" or org name
+ActiveOrg      = nil         -- which org is open in the ORG section (level 3)
+SyncContext    = "personal"  -- routing target during a base sync ("personal" or org name)
+SyncingChannel = ""          -- channel open for duration of active org sync
+SectionIdx     = 1           -- left-panel category index
+SubIdx         = 0           -- 0=left panel focused, 1+=right panel item
+AtlasSearch    = ""
 L_ALT          = false
-L_SHIFT        = false
 HUD_VISIBLE    = true
+StatusMsg      = ""
+StatusExpiry   = 0
+PushQueue    = {}
+PushQueueCh  = ""
+PushQueueIdx = 1
+PushSending  = false
+HudPX        = 13    -- runtime HUD X% (set from databank or HudX export)
+HudPY        = 15    -- runtime HUD Y% (set from databank or HudY export)
 
 -- ── Databank ──────────────────────────────────────────────────
 function LoadData()
@@ -110,10 +158,13 @@ function LoadData()
   OrgData={}
   for _,org in ipairs(OrgNames) do
     local k=OrgKey(org)
-    OrgData[org]={wps=jd(k.."_wps") or {},routes=jd(k.."_routes") or {}}
+    OrgData[org]={wps=jd(k.."_wps") or {},routes=jd(k.."_routes") or {},channel=databank.getStringValue(k.."_ch") or ""}
   end
   NavTarget=jd("nav_target")
   ShipID=BuildShipID()
+  local hx=tonumber(databank.getStringValue("hud_x"))
+  local hy=tonumber(databank.getStringValue("hud_y"))
+  HudPX=hx or HudX; HudPY=hy or HudY
 end
 
 function SaveData()
@@ -125,8 +176,11 @@ function SaveData()
     local k=OrgKey(org)
     databank.setStringValue(k.."_wps",    json.encode(OrgData[org].wps))
     databank.setStringValue(k.."_routes", json.encode(OrgData[org].routes))
+    databank.setStringValue(k.."_ch",     OrgData[org].channel or "")
   end
   databank.setStringValue("nav_target", NavTarget and json.encode(NavTarget) or "")
+  databank.setStringValue("hud_x", tostring(HudPX))
+  databank.setStringValue("hud_y", tostring(HudPY))
 end
 
 -- ── Context helpers ───────────────────────────────────────────
@@ -235,11 +289,20 @@ function ClearWaypoint()
   NavTarget=nil; system.setWaypoint(""); SaveData()
 end
 
+function SendAutopilot(coords)
+  if AutopilotCmd~="" and coords and coords~="" then
+    system.print(AutopilotCmd.." "..coords)
+  end
+end
+
 function SetNavWP(name)
   for _,wp in ipairs(ContextWPs()) do
     if wp.n:lower()==name:lower() then
       NavTarget={t="wp",n=wp.n,c=wp.c,tab=ContextTabIdx()}
-      SaveData(); UpdateWaypoint(); SetStatus("Navigating: "..wp.n); return true
+      SaveData(); UpdateWaypoint()
+      SendAutopilot(wp.c)
+      if AutopilotCmd=="" then SetStatus("Navigating: "..wp.n) end
+      return true
     end
   end
   SetStatus("WP not found: "..name); return false
@@ -252,7 +315,9 @@ function SetNavRoute(name,startStop)
       local idx=startStop or 1
       NavTarget={t="route",n=r.n,c=r.pts[idx].c,tab=ContextTabIdx(),stopIdx=idx,stopTotal=#r.pts}
       SaveData(); UpdateWaypoint()
-      SetStatus("Route: "..r.n.."  stop "..idx.."/"..#r.pts); return true
+      SendAutopilot(r.pts[idx].c)
+      if AutopilotCmd=="" then SetStatus("Route: "..r.n.."  stop "..idx.."/"..#r.pts) end
+      return true
     end
   end
   SetStatus("Route not found: "..name); return false
@@ -289,147 +354,428 @@ function PrevStop()
 end
 
 -- ── Sync / Push ──────────────────────────────────────────────
+function GetPlayerID()
+  local pid=player and tostring(player.getId()) or "0"
+  return pid
+end
+function GetPlayerName()
+  return (player and player.getName()) or "Unknown"
+end
+
+function UpdateChannels()
+  if not receiver then return end
+  local chs={BaseChannel}
+  if SyncingChannel~="" then table.insert(chs,SyncingChannel) end
+  receiver.setChannelList(chs)
+end
+
+
 function RequestSync(ch)
   if not emitter then SetStatus("No emitter") return end
-  emitter.send(ch,"<RequestSync>"..ShipID); SetStatus("Sync requested on "..ch)
+  SyncingChannel=ch; UpdateChannels()
+  emitter.send(ch,"<RequestSync>"..ShipID.."|pid:"..GetPlayerID())
+  SetStatus("Sync requested on "..ch)
 end
 
 function PushToChannel(ch,wps,routes)
   if not emitter then SetStatus("No emitter") return end
-  local pfx=(OrgTag and OrgTag~="") and (OrgTag.."-") or ""
-  local n=0
-  for _,wp in ipairs(wps) do emitter.send(ch,"<PushWP>"..json.encode({n=pfx..wp.n,c=wp.c}):gsub('"',"@@@")); n=n+1 end
-  for _,r in ipairs(routes) do emitter.send(ch,"<PushRoute>"..json.encode({n=pfx..r.n,pts=r.pts}):gsub('"',"@@@")); n=n+1 end
-  SetStatus("Pushed "..n.." items to "..ch)
+  PushQueue={}
+  for _,wp in ipairs(wps) do
+    table.insert(PushQueue,{type="wp",  data={n=wp.n,c=wp.c}})
+  end
+  for _,r in ipairs(routes) do
+    table.insert(PushQueue,{type="route",data={n=r.n,pts=r.pts}})
+  end
+  if #PushQueue==0 then SetStatus("Nothing to push") return end
+  PushQueueCh=ch; PushQueueIdx=1; PushSending=true
+  emitter.send(ch,"<PushAuth>"..ShipID.."|pid:"..GetPlayerID().."|pname:"..GetPlayerName().."|count:"..#PushQueue)
+  SetStatus("Pushing "..#PushQueue.." items to "..ch.."...")
+  unit.setTimer("push_tick",0.25)
 end
 
-function EnsureOrg(name)
-  for _,v in ipairs(OrgNames) do if v==name then return end end
-  table.insert(OrgNames,name); OrgData[name]={wps={},routes={}}; SaveData()
+function EnsureOrg(name, ch)
+  if ch and ch~="" then
+    for i,v in ipairs(OrgNames) do
+      if OrgData[v] and OrgData[v].channel==ch and v~=name then
+        -- Another entry owns this channel — check if real name already exists
+        local nameExists=false
+        for _,e in ipairs(OrgNames) do if e==name then nameExists=true; break end end
+        if nameExists then
+          -- Real entry exists; just remove the stale placeholder and fix channel
+          if OrgData[name] then OrgData[name].channel=ch end
+          OrgData[v]=nil; table.remove(OrgNames,i)
+        else
+          OrgData[name]=OrgData[v]; OrgData[v]=nil; OrgNames[i]=name
+        end
+        SaveData(); return
+      end
+    end
+  end
+  for _,v in ipairs(OrgNames) do if v==name then
+    -- Already exists — just ensure channel is stored
+    if ch and ch~="" and OrgData[v] and OrgData[v].channel=="" then OrgData[v].channel=ch; SaveData() end
+    return
+  end end
+  table.insert(OrgNames,name); OrgData[name]={wps={},routes={},channel=ch or ""}; SaveData()
 end
 
 function OrgChannelForContext()
-  if ActiveContext==OrgChannel1 then return OrgChannel1 end
-  if OrgChannel2~="" and ActiveContext==OrgChannel2 then return OrgChannel2 end
-  if OrgChannel3~="" and ActiveContext==OrgChannel3 then return OrgChannel3 end
-  return OrgChannel1
+  if ActiveContext~="personal" and OrgData[ActiveContext] then
+    local ch=OrgData[ActiveContext].channel
+    if ch and ch~="" then return ch end
+  end
+  return nil
 end
 
--- ── Keyboard menu ─────────────────────────────────────────────
--- Menu structure: all personal WPs, all personal routes,
--- then per-org WPs/routes, then fixed actions
-function GetMenuItems()
+-- ── Two-panel Aviator-style menu ──────────────────────────────
+SECTIONS={"WP","ORG","ROUTES","SETTINGS","ATLAS","TIME CALC"}
+
+function GetSubItems()
   local items={}
-  for _,wp in ipairs(PersonalWPs) do
-    local cp=GetCurrentPos(); local tp=ParsePos(wp.c)
-    local d=(cp and tp) and "  "..FormatDist(CalcDist(cp,tp)) or ""
-    table.insert(items,{type="wp",ctx="personal",n=wp.n,c=wp.c,
-      label="[WP]    "..wp.n..d})
-  end
-  for _,r in ipairs(PersonalRoutes) do
-    table.insert(items,{type="route",ctx="personal",n=r.n,
-      label="[ROUTE] "..r.n.."  ("..#r.pts.." stops)"})
-  end
-  for _,org in ipairs(OrgNames) do
-    for _,wp in ipairs(OrgData[org].wps) do
-      local cp=GetCurrentPos(); local tp=ParsePos(wp.c)
-      local d=(cp and tp) and "  "..FormatDist(CalcDist(cp,tp)) or ""
-      table.insert(items,{type="wp",ctx=org,n=wp.n,c=wp.c,
-        label="["..org.."/WP] "..wp.n..d})
+  local cp=GetCurrentPos()
+  local sec=SECTIONS[SectionIdx]
+
+  if sec=="WP" then
+    for _,wp in ipairs(PersonalWPs) do
+      local tp=ParsePos(wp.c)
+      local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
+      table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx="personal"})
     end
-    for _,r in ipairs(OrgData[org].routes) do
-      table.insert(items,{type="route",ctx=org,n=r.n,
-        label="["..org.."/RT] "..r.n.."  ("..#r.pts.." stops)"})
+    if #items==0 then table.insert(items,{type="info",label="No waypoints  —  type: add NAME"}) end
+
+  elseif sec=="ORG" then
+    if ActiveOrg then
+      -- Level 3: contents of the selected org
+      table.insert(items,{type="sync_org", label="Sync from Org",  org=ActiveOrg})
+      table.insert(items,{type="push_org", label="Push to Org",    org=ActiveOrg})
+      table.insert(items,{type="mark_wp",  label="Mark WP Here"})
+      local owps=(OrgData[ActiveOrg] and OrgData[ActiveOrg].wps) or {}
+      local orts=(OrgData[ActiveOrg] and OrgData[ActiveOrg].routes) or {}
+      if #owps>0 then
+        table.insert(items,{type="hdr",label="WPs"})
+        for _,wp in ipairs(owps) do
+          local tp=ParsePos(wp.c)
+          local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
+          table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx=ActiveOrg})
+        end
+      end
+      if #orts>0 then
+        table.insert(items,{type="hdr",label="ROUTES"})
+        for _,r in ipairs(orts) do
+          table.insert(items,{type="route",n=r.n,stops=#r.pts,ctx=ActiveOrg})
+        end
+      end
+      if #owps==0 and #orts==0 then
+        table.insert(items,{type="info",label="No data — Sync, or: add NAME"})
+      end
+    else
+      -- Level 2: list of orgs
+      if #OrgNames==0 then
+        table.insert(items,{type="info",label="No orgs configured"})
+      else
+        for _,org in ipairs(OrgNames) do
+          local owps=(OrgData[org] and OrgData[org].wps) or {}
+          local orts=(OrgData[org] and OrgData[org].routes) or {}
+          table.insert(items,{type="org_entry",label=org,n=org,sub=#owps.." WPs  "..#orts.." Routes"})
+        end
+      end
     end
+
+  elseif sec=="ROUTES" then
+    for _,r in ipairs(PersonalRoutes) do
+      table.insert(items,{type="route",n=r.n,stops=#r.pts,ctx="personal"})
+    end
+    if #items==0 then table.insert(items,{type="info",label="No routes  —  type: newroute NAME"}) end
+
+  elseif sec=="SETTINGS" then
+    table.insert(items,{type="mark_wp",  label="Mark WP Here"})
+    table.insert(items,{type="next_stop",label="Next Stop"})
+    table.insert(items,{type="prev_stop",label="Prev Stop"})
+    table.insert(items,{type="clear_nav",label="Clear Navigation"})
+    table.insert(items,{type="hdr",      label="BASE"})
+    table.insert(items,{type="sync_base",label="Sync from Base"})
+    table.insert(items,{type="push_base",label="Push to Base"})
+    table.insert(items,{type="hdr",      label="ORG"})
+    table.insert(items,{type="sync_org", label="Sync from Org"})
+    table.insert(items,{type="push_org", label="Push to Org"})
+
+  elseif sec=="ATLAS" then
+    if Atlas then
+      local bodies={}
+      for _,sys in pairs(Atlas) do
+        for _,body in pairs(sys) do
+          local nm=type(body.name)=="table" and body.name[1] or body.name
+          if type(nm)=="string" and nm~="" and body.center then
+            local c=body.center
+            local pos=string.format("::pos{0,0,%.4f,%.4f,%.4f}",c[1],c[2],c[3])
+            table.insert(bodies,{n=nm,pos=pos})
+          end
+        end
+      end
+      table.sort(bodies,function(a,b) return a.n:lower()<b.n:lower() end)
+      local q=AtlasSearch~="" and AtlasSearch:lower() or nil
+      for _,b in ipairs(bodies) do
+        if not q or b.n:lower():find(q,1,true) then
+          table.insert(items,{type="atlas",n=b.n,c=b.pos})
+        end
+      end
+      if q and #items==0 then
+        table.insert(items,{type="info",label="No match: "..AtlasSearch})
+      end
+    else
+      table.insert(items,{type="info",label="Atlas not loaded"})
+    end
+
+  else -- TIME CALC
+    local V=(CalcSpeed or 30000)/3.6
+    local A=CalcAccel or 5
+    table.insert(items,{type="info",label=string.format("Speed: %g km/h  |  Accel: %g m/s\xc2\xb2",(CalcSpeed or 30000),(CalcAccel or 5))})
+    -- Current target
+    if NavTarget and NavTarget.c then
+      local tp=ParsePos(NavTarget.c); local cp=GetCurrentPos()
+      local dist=tp and cp and CalcDist(cp,tp) or nil
+      local t=dist and CalcTravelTime(dist) or nil
+      local row=string.format("TARGET: %s  →  %s", NavTarget.n:sub(1,16), t and FormatTime(t) or "---")
+      table.insert(items,{type="info",label=row,highlight=true})
+    else
+      table.insert(items,{type="info",label="No nav target set"})
+    end
+    table.insert(items,{type="hdr",label="PERSONAL WPs"})
+    local cp=GetCurrentPos()
+    for _,wp in ipairs(PersonalWPs) do
+      local tp=ParsePos(wp.c)
+      local dist=tp and cp and CalcDist(cp,tp) or nil
+      local t=dist and CalcTravelTime(dist) or nil
+      table.insert(items,{type="time",n=wp.n,dist=dist,t=t})
+    end
+    if #PersonalWPs==0 then table.insert(items,{type="info",label="No waypoints"}) end
   end
-  table.insert(items,{type="mark_wp",   label="[ACT] Mark WP Here"})
-  table.insert(items,{type="next_stop", label="[ACT] Next Stop"})
-  table.insert(items,{type="prev_stop", label="[ACT] Prev Stop"})
-  table.insert(items,{type="clear_nav", label="[ACT] Clear Navigation"})
-  table.insert(items,{type="sync_base", label="[ACT] Sync from Base"})
-  table.insert(items,{type="sync_org",  label="[ACT] Sync from Org (ch1)"})
-  table.insert(items,{type="push_base", label="[ACT] Push to Base"})
+
   return items
+end
+
+function GetSelectable(items)
+  local sel={}
+  for i,v in ipairs(items) do
+    if v.type~="hdr" and v.type~="info" then table.insert(sel,{i=i,v=v}) end
+  end
+  return sel
 end
 
 function DrawHUD()
   if not HUD_VISIBLE then system.showScreen(0) return end
   local W=system.getScreenWidth(); local H=system.getScreenHeight()
   local sc=H/1080
-  local pw=math.floor(340*sc)
-  local fs=math.floor(14*sc); local fsS=math.floor(12*sc)
-  local rh=math.floor(26*sc)
-  local px=math.floor(W*0.18); local py=math.floor(H*0.30)
+  local lw=math.floor(185*sc)
+  local rw=math.floor(290*sc)
+  local gap=math.floor(5*sc)
+  local px=math.floor(W*(HudPX/100)); local py=math.floor(H*(HudPY/100))
+  local fs=math.floor(13*sc); local fsS=math.floor(11*sc); local fsH=math.floor(12*sc)
+  local rh=math.floor(30*sc)
 
-  local items=GetMenuItems()
-  local winSize=12
-  local si=math.max(1, MenuIndex-5)
-  local ei=math.min(#items, si+winSize-1)
-  if ei-si < winSize-1 then si=math.max(1,ei-winSize+1) end
+  local items=GetSubItems()
+  local sel=GetSelectable(items)
+  local clampedSub=math.min(SubIdx,#sel)
+
+  -- build selectable index map: items[i] → which # in sel list
+  local selIdxMap={}
+  local si=0
+  for i,v in ipairs(items) do
+    if v.type~="hdr" and v.type~="info" then si=si+1; selIdxMap[i]=si end
+  end
+
+  -- ── Accent colors ─────────────────────────────────────────────
+  local ar,ag,ab = AccentR/255, AccentG/255, AccentB/255
+  local mx=math.max(ar,ag,ab,0.001)
+  local nr,ng,nb = ar/mx,ag/mx,ab/mx
+  local function rgba(r,g,b,a) return string.format("rgba(%d,%d,%d,%.2f)",math.floor(r*255),math.floor(g*255),math.floor(b*255),a) end
+  local cA  = string.format("rgb(%d,%d,%d)",math.floor(ar*255),math.floor(ag*255),math.floor(ab*255))
+  local cBg = rgba(nr*0.01,       ng*0.01+0.002,  nb*0.04+0.007,  0.93)
+  local cBd = rgba(nr*0.47,       ng*0.47,         nb*0.47,         0.45)
+  local cPH = rgba(nr*0.20,       ng*0.20,         nb*0.47,         0.60)
+  local cSl = rgba(ar,            ag,              ab,              0.35)
+  local cDv = rgba(nr*0.24,       ng*0.24,         nb*0.55,         0.25)
+  local cNB = rgba(nr*0.12,       ng*0.12,         nb*0.31,         0.60)
+  local cFt = string.format("rgb(%d,%d,%d)",math.floor(nr*55+25),math.floor(ng*55+30),math.floor(nb*55+50))
+  local cRi = string.format("rgb(%d,%d,%d)",math.floor(nr*55+30),math.floor(ng*55+45),math.floor(nb*55+70))
+  local ls15=math.floor(15*sc)
 
   local h={}
   h[#h+1]=string.format([[<style>
-   .np{position:absolute;top:%dpx;left:%dpx;width:%dpx;background:rgba(0,5,25,0.88);border:1px solid rgba(0,140,255,0.55);}
-   .nt{font-family:Arial;font-size:%dpx;color:rgb(0,210,255);text-align:center;padding:3px 6px;background:rgba(0,70,150,0.5);}
-   .nr{font-family:Arial;font-size:%dpx;color:rgb(160,190,230);padding:2px 8px;border-top:1px solid rgba(0,80,180,0.25);white-space:nowrap;overflow:hidden;}
-   .ng{color:rgb(0,220,160);}
-   .ns{background:rgba(0,110,240,0.55);color:white;}
-   .nh{color:rgb(90,120,155);font-size:%dpx;text-align:center;padding:2px;}
-  </style>]], py,px,pw, fs,fs,fsS)
-  h[#h+1]='<div class="np">'
-  h[#h+1]=string.format('<div class="nt">NAVIGATOR  %s</div>', ShipID)
+*{box-sizing:border-box;margin:0;padding:0;}body{overflow:hidden;}
+.lp,.rp{position:absolute;top:%dpx;background:%s;border:1px solid %s;border-radius:4px;overflow:hidden;}
+.lp{left:%dpx;width:%dpx;}
+.rp{left:%dpx;width:%dpx;}
+.ph{font-family:Arial;font-size:%dpx;color:%s;text-align:center;padding:4px 6px;background:%s;border-bottom:1px solid %s;}
+.lr{font-family:Arial;font-size:%dpx;color:rgb(140,170,215);display:flex;align-items:center;justify-content:space-between;padding:0 12px;height:%dpx;border-bottom:1px solid %s;}
+.lsel{background:%s;color:white;}
+.la{color:%s;font-size:%dpx;}
+.sep{font-family:Arial;font-size:%dpx;color:%s;text-align:center;padding:2px 8px;border-bottom:1px solid %s;font-style:italic;}
+.rr{font-family:Arial;font-size:%dpx;display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:%dpx;border-bottom:1px solid %s;white-space:nowrap;overflow:hidden;}
+.ri{font-family:Arial;font-size:%dpx;color:%s;padding:3px 10px;border-bottom:1px solid %s;font-style:italic;}
+.rw{color:%s;}.rrt{color:rgb(80,215,130);}
+.ra{color:rgb(255,180,60);}
+.rsel{background:%s;color:white;}
+.num{color:rgb(80,110,150);margin-right:6px;}
+.arr{color:%s;margin-left:6px;font-size:%dpx;}
+.nav{font-family:Arial;font-size:%dpx;color:%s;padding:3px 8px;background:%s;border-bottom:1px solid %s;white-space:nowrap;overflow:hidden;}
+.ft{font-family:Arial;font-size:%dpx;color:%s;text-align:center;padding:2px 4px;border-top:1px solid %s;}
+.st{color:rgb(255,178,50);}
+</style>]],
+    py,cBg,cBd,
+    px,lw,
+    px+lw+gap,rw,
+    fsH,cA,cPH,cBd,
+    fs,rh,cDv,
+    cSl,cA,ls15,
+    fsS,cFt,cDv,
+    fs,rh,cDv,
+    fsS,cRi,cDv,
+    cA,
+    cSl,
+    cA,ls15,
+    fsH,cA,cNB,cBd,
+    fsS,cFt,cDv)
 
-  -- nav target
+  -- ── LEFT PANEL ───────────────────────────────────────────────
+  h[#h+1]='<div class="lp">'
+  h[#h+1]=string.format('<div class="ph">&#9670; %s &#9670;</div>', ShipID:sub(1,18))
+  for i,lbl in ipairs(SECTIONS) do
+    local isSel=(i==SectionIdx)
+    local cls="lr"..(isSel and " lsel" or "")
+    h[#h+1]=string.format('<div class="%s"><span>%s</span><span class="la">&#62;</span></div>', cls, lbl)
+  end
+  if StatusMsg~="" then
+    h[#h+1]=string.format('<div class="ft st">%s</div>', StatusMsg:sub(1,26))
+  else
+    h[#h+1]='<div class="ft">&#8593;&#8595; Alt &#8593;&#8595; &nbsp;|&nbsp; &#9658; Alt &#8594;</div>'
+  end
+  h[#h+1]='</div>'
+
+  -- ── RIGHT PANEL ──────────────────────────────────────────────
+  h[#h+1]='<div class="rp">'
+  -- Current nav target
   if NavTarget then
-    local tp=ParsePos(NavTarget.c); local cp=GetCurrentPos()
-    local dist=(tp and cp) and FormatDist(CalcDist(cp,tp)) or "---"
+    local tp=ParsePos(NavTarget.c); local cp2=GetCurrentPos()
+    local dist=(tp and cp2) and FormatDist(CalcDist(cp2,tp)) or "---"
     local lbl=(NavTarget.t=="route") and "ROUTE" or "WP"
     local si2=(NavTarget.t=="route") and string.format(" [%d/%d]",NavTarget.stopIdx,NavTarget.stopTotal) or ""
-    h[#h+1]=string.format('<div class="nr ng">&#9658; %s: %s%s  %s</div>', lbl, NavTarget.n, si2, dist)
+    h[#h+1]=string.format('<div class="nav">&#9658; %s: %s%s &nbsp; %s</div>', lbl, NavTarget.n:sub(1,20), si2, dist)
   else
-    h[#h+1]='<div class="nr ng">&#9658; No target</div>'
+    h[#h+1]='<div class="nav" style="color:rgb(65,85,115);">&#9658; No target</div>'
   end
-
-  -- hint row
-  if #items>0 then
-    h[#h+1]=string.format('<div class="nh">(%d/%d)  Alt+&#8593;&#8595; browse  |  Alt+&#8594; select</div>', MenuIndex>0 and MenuIndex or 0, #items)
-  else
-    h[#h+1]='<div class="nh">No waypoints — type: add NAME</div>'
+  -- AP hint
+  if AutopilotCmd~="" and NavTarget and NavTarget.c then
+    h[#h+1]=string.format('<div class="nav" style="color:rgb(255,200,50);font-size:%dpx;">%s</div>',
+      fsS, (AutopilotCmd.." "..NavTarget.c):sub(1,40))
   end
+  local secLabel=SECTIONS[SectionIdx]
+  if secLabel=="ATLAS" and AtlasSearch~="" then secLabel="ATLAS  /"..AtlasSearch end
+  if secLabel=="ORG" and ActiveOrg then secLabel="ORG  &#8250;  "..ActiveOrg end
+  h[#h+1]=string.format('<div class="ph">&#8592; %s</div>', secLabel)
 
-  -- item list
-  for i=si,ei do
+  -- scroll window
+  local vis=9
+  local winStart=1
+  if clampedSub>0 then
+    winStart=math.max(1,clampedSub-math.floor(vis/2))
+    winStart=math.min(winStart,math.max(1,#items-vis+1))
+  end
+  local winEnd=math.min(#items,winStart+vis-1)
+
+  for i=winStart,winEnd do
     local item=items[i]
-    local cls=(i==MenuIndex) and 'nr ns' or 'nr'
-    local pre=(i==MenuIndex) and '&#9658; ' or '&#160;&#160;&#160;'
-    h[#h+1]=string.format('<div class="%s">%s%s</div>', cls, pre, item.label)
+    local sIdx=selIdxMap[i] or 0
+    local isSel=(SubIdx>0 and sIdx==clampedSub and sIdx>0)
+    if item.type=="hdr" then
+      h[#h+1]=string.format('<div class="sep">%s</div>', item.label)
+    elseif item.type=="info" then
+      local style=item.highlight and ' style="color:rgb(0,200,180);"' or ""
+      h[#h+1]=string.format('<div class="ri"%s>%s</div>', style, item.label)
+    elseif item.type=="wp" then
+      local cls="rr rw"..(isSel and " rsel" or "")
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.65">%s</span><span class="arr">&#62;</span></span></div>',
+        cls, sIdx, item.n:sub(1,18), item.dist or "---")
+    elseif item.type=="route" then
+      local cls="rr rrt"..(isSel and " rsel" or "")
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.65">%d stops</span><span class="arr">&#62;</span></span></div>',
+        cls, sIdx, item.n:sub(1,18), item.stops or 0)
+    elseif item.type=="atlas" then
+      local cls="rr rw"..(isSel and " rsel" or "")
+      local cp2=GetCurrentPos(); local tp=ParsePos(item.c)
+      local d=(cp2 and tp) and FormatDist(CalcDist(cp2,tp)) or "---"
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.65">%s</span><span class="arr">&#62;</span></span></div>',
+        cls, sIdx, item.n:sub(1,18), d)
+    elseif item.type=="time" then
+      local cls="rr rw"
+      h[#h+1]=string.format('<div class="%s"><span>%s</span><span style="opacity:0.75">%s</span></div>',
+        cls, item.n:sub(1,18), item.t and FormatTime(item.t) or "---")
+    elseif item.type=="org_entry" then
+      local cls="rr ra"..(isSel and " rsel" or "")
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.55">%s</span><span class="arr">&#62;</span></span></div>',
+        cls, sIdx, item.label:sub(1,14), item.sub or "")
+    else
+      local cls="rr ra"..(isSel and " rsel" or "")
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span class="arr">&#62;</span></div>',
+        cls, sIdx, item.label or item.type)
+    end
   end
 
+  -- footer
+  if #sel==0 then
+    h[#h+1]='<div class="ft">Alt &#8592; to go back</div>'
+  elseif SubIdx==0 then
+    h[#h+1]='<div class="ft">Alt &#8594; to enter &nbsp;|&nbsp; Alt &#8592; = back</div>'
+  else
+    h[#h+1]=string.format('<div class="ft">%d / %d &nbsp;|&nbsp; Alt &#8592; = back</div>', clampedSub, #sel)
+  end
   h[#h+1]='</div>'
+
   system.setScreen(table.concat(h))
   system.showScreen(1)
 end
 
 function ActivateMenuItem()
-  if MenuIndex<=0 then SetStatus("Alt+Up/Down to browse, Alt+Right to activate") return end
-  local items=GetMenuItems()
-  local item=items[MenuIndex]
-  if not item then return end
-  if item.type=="wp" then
-    ActiveContext=item.ctx
-    SetNavWP(item.n)
+  if SubIdx==0 then
+    -- Enter the right panel
+    local items=GetSubItems(); local sel=GetSelectable(items)
+    if #sel>0 then SubIdx=1 end
+    DrawHUD(); return
+  end
+  local items=GetSubItems(); local sel=GetSelectable(items)
+  local clampedSub=math.min(SubIdx,#sel)
+  if clampedSub<1 then DrawHUD(); return end
+  local item=sel[clampedSub].v
+  if item.type=="atlas" then
+    NavTarget={t="wp",n=item.n,c=item.c}
+    SaveData(); UpdateWaypoint()
+    SendAutopilot(item.c)
+    SetStatus("Navigating: "..item.n)
+  elseif item.type=="wp" then
+    ActiveContext=item.ctx; SetNavWP(item.n)
   elseif item.type=="route" then
-    ActiveContext=item.ctx
-    SetNavRoute(item.n,1)
+    ActiveContext=item.ctx; SetNavRoute(item.n,1)
   elseif item.type=="mark_wp" then
     local p=GetCurrentPosStr()
     if p then AddWP(AutoName("WP",ContextWPs()),p) else SetStatus("No position") end
   elseif item.type=="next_stop"  then NextStop()
   elseif item.type=="prev_stop"  then PrevStop()
-  elseif item.type=="clear_nav"  then ClearWaypoint();SetStatus("Nav cleared")
+  elseif item.type=="clear_nav"  then ClearWaypoint(); SetStatus("Nav cleared")
+  elseif item.type=="org_entry"  then
+    ActiveOrg=item.n; ActiveContext=item.n; SubIdx=1
   elseif item.type=="sync_base"  then RequestSync(BaseChannel)
-  elseif item.type=="sync_org"   then RequestSync(OrgChannel1)
+  elseif item.type=="sync_org"   then
+    local ch=(OrgData[item.org] and OrgData[item.org].channel) or ""
+    if ch~="" then RequestSync(ch) else SetStatus("No channel set for "..item.org) end
   elseif item.type=="push_base"  then PushToChannel(BaseChannel,PersonalWPs,PersonalRoutes)
+  elseif item.type=="push_org"   then
+    local org=item.org
+    if OrgData[org] then
+      ActiveContext=org
+      local ch=OrgData[org].channel or ""
+      if ch~="" then PushToChannel(ch,OrgData[org].wps,OrgData[org].routes)
+      else SetStatus("No channel set for "..org) end
+    else SetStatus("Sync from org first") end
   end
   DrawHUD()
 end
@@ -445,17 +791,13 @@ do
   end
 end
 LoadData()
-local chs={BaseChannel}
-if OrgChannel1~="" then table.insert(chs,OrgChannel1) end
-if OrgChannel2~="" then table.insert(chs,OrgChannel2) end
-if OrgChannel3~="" then table.insert(chs,OrgChannel3) end
-if receiver then receiver.setChannelList(chs) end
+UpdateChannels()
 unit.setTimer("nav_tick",5)
 UpdateWaypoint()
 DrawHUD()
 system.print("=== Navigator "..VERSION.." (No Screen) ===  "..ShipID)
 system.print("Target: "..(NavTarget and NavTarget.n or "none"))
-system.print("Alt+Up/Down = browse  |  Alt+Right = activate  |  type help")
+system.print("Alt+Q/C = scroll  |  Alt+D = select  |  Shift = toggle HUD  |  type: help")
 
 
 --[[@
@@ -463,7 +805,6 @@ slot=-1
 event=onStop()
 args=
 ]]
-system.setWaypoint("")
 system.showScreen(0)
 
 
@@ -472,15 +813,17 @@ slot=-1
 event=onTimer(tag)
 args="nav_tick"
 ]]
+if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg="" end
 UpdateWaypoint()
 DrawHUD()
-if NavTarget then
-  local tp=ParsePos(NavTarget.c); local cp=GetCurrentPos()
-  local dist=(tp and cp) and FormatDist(CalcDist(cp,tp)) or "---"
-  local lbl=(NavTarget.t=="route") and "[ROUTE]" or "[WP]"
-  system.print("[NAV] "..lbl.." "..NavTarget.n.."  "..dist)
-  if NavTarget.t=="route" then system.print("[NAV] Stop "..NavTarget.stopIdx.."/"..NavTarget.stopTotal) end
-end
+
+
+--[[@
+slot=-4
+event=onActionStart(action)
+args="lalt"
+]]
+L_ALT=true
 
 
 --[[@
@@ -501,29 +844,11 @@ L_ALT=false
 
 --[[@
 slot=-4
-event=onActionLoop(action)
-args="lshift"
-]]
-L_SHIFT=true
-
-
---[[@
-slot=-4
-event=onActionStop(action)
-args="lshift"
-]]
-L_SHIFT=false
-
-
---[[@
-slot=-4
 event=onActionStart(action)
-args="insert"
+args="lshift"
 ]]
-if L_ALT and L_SHIFT then
-  HUD_VISIBLE=not HUD_VISIBLE
-  DrawHUD()
-end
+HUD_VISIBLE=not HUD_VISIBLE
+DrawHUD()
 
 
 --[[@
@@ -532,9 +857,12 @@ event=onActionStart(action)
 args="up"
 ]]
 if not L_ALT then return end
-local items=GetMenuItems()
-if #items==0 then SetStatus("No items") return end
-MenuIndex=(MenuIndex<=1) and #items or (MenuIndex-1)
+if SubIdx==0 then
+  SectionIdx=math.max(1,SectionIdx-1); ActiveOrg=nil; ActiveContext="personal"
+else
+  local items=GetSubItems(); local sel=GetSelectable(items)
+  SubIdx=math.max(1,SubIdx-1)
+end
 DrawHUD()
 
 
@@ -544,19 +872,57 @@ event=onActionStart(action)
 args="down"
 ]]
 if not L_ALT then return end
-local items=GetMenuItems()
-if #items==0 then SetStatus("No items") return end
-MenuIndex=(MenuIndex>=#items) and 1 or (MenuIndex+1)
+if SubIdx==0 then
+  SectionIdx=math.min(#SECTIONS,SectionIdx+1); ActiveOrg=nil; ActiveContext="personal"
+else
+  local items=GetSubItems(); local sel=GetSelectable(items)
+  SubIdx=math.min(#sel,SubIdx+1)
+end
 DrawHUD()
 
 
 --[[@
 slot=-4
 event=onActionStart(action)
-args="right"
+args="straferight"
 ]]
 if not L_ALT then return end
 ActivateMenuItem()
+
+
+--[[@
+slot=-4
+event=onActionStart(action)
+args="strafeleft"
+]]
+if not L_ALT then return end
+if SECTIONS[SectionIdx]=="ORG" and ActiveOrg then
+  ActiveOrg=nil; ActiveContext="personal"; SubIdx=1
+else
+  SubIdx=0
+end
+DrawHUD()
+
+
+--[[@
+slot=-1
+event=onTimer(tag)
+args="push_tick"
+]]
+if not PushSending then unit.setTimer("push_tick",0) return end
+if PushQueueIdx>#PushQueue then
+  PushSending=false; unit.setTimer("push_tick",0)
+  SetStatus("Pushed "..#PushQueue.." items to "..PushQueueCh)
+  DrawHUD(); return
+end
+local item=PushQueue[PushQueueIdx]
+if item.type=="wp" then
+  emitter.send(PushQueueCh,"<PushWP>"..json.encode(item.data):gsub('"',"@@@"))
+elseif item.type=="route" then
+  emitter.send(PushQueueCh,"<PushRoute>"..json.encode(item.data):gsub('"',"@@@"))
+end
+PushQueueIdx=PushQueueIdx+1
+
 
 
 --[[@
@@ -564,14 +930,23 @@ slot=1
 event=onReceived(channel,message)
 args=*,*
 ]]
-local isOrg=(channel==OrgChannel1 or channel==OrgChannel2 or channel==OrgChannel3)
+-- isOrg: receiving on SyncingChannel (org sync request) or ShipID (first sync push)
+local isOrg=(SyncingChannel~="" and channel==SyncingChannel)
 
 if message:find("<OrgName>",1,true) then
   SyncOrgName=Trim(message:gsub("<OrgName>",""))
-  EnsureOrg(SyncOrgName)
+  EnsureOrg(SyncOrgName,channel)
+end
+if message:find("<OrgSyncStart>",1,true) then
+  -- Base is sending cached org data; switch routing context
+  local body=message:gsub("<OrgSyncStart>","")
+  local orgName=body:match("^(.+)|ch:") or body
+  local orgCh=body:match("|ch:(.+)$") or ""
+  EnsureOrg(orgName,orgCh)
+  SyncContext=orgName
 end
 if message:find("<SyncCount>",1,true) then
-  SyncReceived=0
+  SyncReceived=0; SyncContext="personal"
   SetStatus("Syncing from "..(isOrg and (SyncOrgName~="" and SyncOrgName or "org") or "base").."...")
 end
 if message:find("<SyncWP>",1,true) then
@@ -582,6 +957,11 @@ if message:find("<SyncWP>",1,true) then
     if isOrg and SyncOrgName~="" then
       EnsureOrg(SyncOrgName)
       local list=OrgData[SyncOrgName].wps
+      local found=false
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      if not found then table.insert(list,{n=wp.n,c=wp.c}) end
+    elseif SyncContext~="personal" and OrgData[SyncContext] then
+      local list=OrgData[SyncContext].wps
       local found=false
       for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
       if not found then table.insert(list,{n=wp.n,c=wp.c}) end
@@ -597,19 +977,41 @@ if message:find("<SyncRoute>",1,true) then
   local ok,r=pcall(json.decode,raw)
   if ok and r and r.n then
     SyncReceived=(SyncReceived or 0)+1
-    local list=((isOrg and SyncOrgName~="") and OrgData[SyncOrgName] and OrgData[SyncOrgName].routes) or PersonalRoutes
+    local list
+    if isOrg and SyncOrgName~="" then
+      list=(OrgData[SyncOrgName] and OrgData[SyncOrgName].routes) or PersonalRoutes
+    elseif SyncContext~="personal" and OrgData[SyncContext] then
+      list=OrgData[SyncContext].routes
+    else
+      list=PersonalRoutes
+    end
     local found=false
     for i,e in ipairs(list) do if e.n:lower()==r.n:lower() then list[i]=r;found=true;break end end
     if not found then table.insert(list,r) end
   end
 end
+if message:find("<SyncDenied>",1,true) then
+  SetStatus("Sync denied — ask org admin to whitelist you",8)
+  DrawHUD(); return
+end
+if message:find("<PushPending>",1,true) then
+  SetStatus("Push queued for admin approval",6)
+  DrawHUD(); return
+end
+
 if message:find("<SyncComplete>",1,true) then
-  if isOrg and SyncOrgName~="" then
-    table.sort(OrgData[SyncOrgName].wps,   function(a,b) return a.n:lower()<b.n:lower() end)
-    table.sort(OrgData[SyncOrgName].routes,function(a,b) return a.n:lower()<b.n:lower() end)
-  else
-    table.sort(PersonalWPs,   function(a,b) return a.n:lower()<b.n:lower() end)
-    table.sort(PersonalRoutes,function(a,b) return a.n:lower()<b.n:lower() end)
+  table.sort(PersonalWPs,   function(a,b) return a.n:lower()<b.n:lower() end)
+  table.sort(PersonalRoutes,function(a,b) return a.n:lower()<b.n:lower() end)
+  for _,org in ipairs(OrgNames) do
+    if OrgData[org] then
+      table.sort(OrgData[org].wps,    function(a,b) return a.n:lower()<b.n:lower() end)
+      table.sort(OrgData[org].routes, function(a,b) return a.n:lower()<b.n:lower() end)
+    end
+  end
+  SyncContext="personal"
+  if SyncingChannel~="" and channel==SyncingChannel then
+    SyncingChannel=""; UpdateChannels()
+    system.print("[NAV] Org sync complete — channel closed")
   end
   SaveData(); SetStatus("Sync done: "..SyncReceived.." items")
 end
@@ -647,35 +1049,50 @@ if lo=="help" then
   system.print("next / prev            next/prev stop")
   system.print("sync / orgsync         sync from base")
   system.print("push / orgpush         push to base")
+  system.print("firstsync CHANNEL      first-time org sync, e.g: firstsync NavOrg")
   system.print("org NAME               switch active context")
+  system.print("search NAME            filter atlas by name")
+  system.print("search                 clear atlas filter")
   system.print("list / routes          list items")
   system.print("status                 show current nav")
+  system.print("hudpos X Y              move HUD (e.g. hudpos 13 15)")
   system.print("Alt+Up/Down = browse  |  Alt+Right = activate")
   return
 end
 
-local addN,addC=t:match("^[Aa][Dd][Dd]%s+(%S+)%s*(.*)")
+local addN,addC=t:match("^[Aa][Dd][Dd]%s+(.-)%s*(::pos%b{})")
+if not addN then addN=t:match("^[Aa][Dd][Dd]%s+(.+)") end  -- no coords = use current pos
 if addN then
-  addC=Trim(addC)
-  if addC=="" then
+  addN=Trim(addN)
+  if addC and addC~="" then
+    if ParsePos(addC) then AddWP(addN,addC) else SetStatus("Bad coords") end
+  else
     local p=GetCurrentPosStr()
     if p then AddWP(addN,p) else SetStatus("No position") end
-  else
-    if ParsePos(addC) then AddWP(addN,addC) else SetStatus("Bad coords") end
   end
   return
 end
 
-local delN=t:match("^[Dd][Ee][Ll]%s+(%S+)$")
+local srQ=t:match("^[Ss][Ee][Aa][Rr][Cc][Hh]%s*(.*)")
+if srQ~=nil then
+  AtlasSearch=Trim(srQ)
+  SubIdx=0
+  if AtlasSearch=="" then SetStatus("Atlas filter cleared")
+  else SetStatus("Atlas filter: "..AtlasSearch) end
+  DrawHUD(); return
+end
+
+local delN=t:match("^[Dd][Ee][Ll]%s+(.+)$")
 if delN and delN:lower()~="route" then DelWP(Trim(delN)); return end
 
 local nrN=t:match("^[Nn][Ee][Ww][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
 if nrN then AddRoute(Trim(nrN)); return end
 
-local asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(%S+)%s+(.*)")
-if asRT then AddStop(Trim(asRT),Trim(asArg)); return end
+local asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s+(::pos%b{})")
+if not asRT then asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s*$") end
+if asRT then AddStop(Trim(asRT),Trim(asArg or "")); return end
 
-local dsRT,dsN=t:match("^[Dd][Ee][Ll][Ss][Tt][Oo][Pp]%s+(%S+)%s+(%d+)")
+local dsRT,dsN=t:match("^[Dd][Ee][Ll][Ss][Tt][Oo][Pp]%s+(.-)%s+(%d+)%s*$")
 if dsRT then DelStop(Trim(dsRT),tonumber(dsN)); return end
 
 local drN=t:match("^[Dd][Ee][Ll][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
@@ -694,12 +1111,21 @@ end
 
 if lo=="next"    then NextStop(); return end
 if lo=="prev"    then PrevStop(); return end
+local fsCh=t:match("^[Ff][Ii][Rr][Ss][Tt][Ss][Yy][Nn][Cc]%s+(.+)")
+if fsCh then RequestSync(Trim(fsCh)); return end
+if lo=="firstsync" then SetStatus("Usage: firstsync CHANNEL  (channel shown on org sync PB screen)"); return end
 if lo=="sync"    then RequestSync(BaseChannel); return end
-if lo=="orgsync" then RequestSync(OrgChannelForContext()); return end
+if lo=="orgsync" then
+  local ch=OrgChannelForContext()
+  if ch then RequestSync(ch) else SetStatus("No org active — use org menu to sync") end
+  return
+end
 if lo=="push"    then PushToChannel(BaseChannel,PersonalWPs,PersonalRoutes); return end
 if lo=="orgpush" then
   local org=ActiveContext
-  if org~="personal" and OrgData[org] then PushToChannel(OrgChannelForContext(),OrgData[org].wps,OrgData[org].routes)
+  local ch=OrgChannelForContext()
+  if org~="personal" and OrgData[org] and ch then PushToChannel(ch,OrgData[org].wps,OrgData[org].routes)
+  elseif not ch then SetStatus("No channel for org — do first sync first")
   else SetStatus("Set org context first: org ORGNAME") end
   return
 end
@@ -752,6 +1178,12 @@ if lo=="routes" then
     end
   end
   return
+end
+
+local hpX,hpY=t:match("^[Hh][Uu][Dd][Pp][Oo][Ss]%s+(%d+)%s+(%d+)%s*$")
+if hpX then
+  HudPX=math.max(0,math.min(90,tonumber(hpX))); HudPY=math.max(0,math.min(90,tonumber(hpY)))
+  SaveData(); SetStatus("HUD position: "..HudPX.."% "..HudPY.."%"); DrawHUD(); return
 end
 
 SetStatus("Unknown: '"..lo.."'  type help")

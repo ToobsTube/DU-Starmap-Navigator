@@ -12,8 +12,8 @@ const CONFIGS = {
   ship_screen: {
     output: 'Navigator_Ship_Screen_v2.0.txt',
     slots: {
-       '0': 'screen',   '1': 'databank', '2': 'core',
-       '3': 'receiver', '4': 'emitter',
+       '0': 'screen',   '1': 'databank',
+       '2': 'receiver', '3': 'emitter',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
@@ -110,7 +110,7 @@ function build(sourceName, config) {
   const outPath = path.join('dist', config.output);
   console.log(`Building ${srcPath}  →  ${outPath}`);
 
-  const lua = fs.readFileSync(srcPath, 'utf8');
+  const lua = fs.readFileSync(srcPath, 'utf8').replace(/\r\n/g, '\n');
 
   fs.mkdirSync('dist', { recursive: true });
 
@@ -134,8 +134,35 @@ function build(sourceName, config) {
   console.log(`  OK  (${duHandlers.length} handlers, ${Object.keys(slots).length} slots)`);
 }
 
+const TOOLS = {
+  databank_inspector: {
+    src: 'tools/databank_inspector.lua',
+    output: 'tools/Databank_Inspector.txt',
+    slots: {
+       '0': 'screen',   '1': 'databank',
+      '-1': 'unit',    '-2': 'construct', '-3': 'player',
+      '-4': 'system',  '-5': 'library',
+    }
+  },
+};
+
 console.log('=== DU Navigator Build ===');
 for (const [name, cfg] of Object.entries(CONFIGS)) {
   build(name, cfg);
+}
+console.log('\n=== Tools ===');
+for (const [, cfg] of Object.entries(TOOLS)) {
+  const srcPath = cfg.src;
+  const outPath = path.join('dist', cfg.output);
+  console.log(`Building ${srcPath}  →  ${outPath}`);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  const lua = fs.readFileSync(srcPath, 'utf8').replace(/\r\n/g, '\n');
+  const rawHandlers = parseHandlers(lua);
+  const duHandlers  = rawHandlers.map(h => buildHandler(h, cfg.slots));
+  const slots = {};
+  for (const [k, n] of Object.entries(cfg.slots)) slots[k] = makeSlotEntry(n);
+  const duJson = { slots, handlers: duHandlers, methods: [], events: [] };
+  fs.writeFileSync(outPath, JSON.stringify(duJson), 'utf8');
+  console.log(`  OK  (${duHandlers.length} handlers)`);
 }
 console.log('\nDone. Import .txt files from dist/ into DU programming boards.');
