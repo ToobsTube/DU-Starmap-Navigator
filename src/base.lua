@@ -567,6 +567,8 @@ if pr and cx>=svX and cx<svX+svW and cy>=svY and cy<svY+svH then
 end
 ]]
 
+  local vpX = 214 + 256 + 8  -- svX + svW + 8 (must match render-script layout in S[3])
+
   S[6]=string.format([[
 -- VALUES & PREVIEW
 local valY=bodyY+8

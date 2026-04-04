@@ -291,6 +291,236 @@ function BuildShipID()
   if cid~="" then return name.."#"..cid:sub(-6) end
   return name
 end
+function BuildPickerScript()
+  local P=Palette
+  local slots=ThemeSlots
+  local elem=PickerElem
+  local cur=slots[elem]
+  local cr,cg,cb=HSV2RGB(cur.h,cur.s,cur.v)
+  local profName=GetActiveProfileName()
+  local profNames=GetThemeProfiles()
+  local swatches={}
+  for i=1,8 do
+    local r,g,b=HSV2RGB(slots[i].h,slots[i].s,slots[i].v)
+    table.insert(swatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
+  end
+  local swLit="{"..table.concat(swatches,",").."}"
+  local lblLit="{"
+  for i,l in ipairs(THEME_SLOT_LABELS) do
+    if i>1 then lblLit=lblLit.."," end
+    lblLit=lblLit..'"'..l..'"'
+  end
+  lblLit=lblLit.."}"
+  local pnLit="{"
+  for i,n in ipairs(profNames) do
+    if i>1 then pnLit=pnLit.."," end
+    pnLit=pnLit..'"'..n..'"'
+  end
+  pnLit=pnLit.."}"
+  local S={}
+  local h1={}
+  h1[#h1+1]="local json=require('dkjson')\nlocal SW,SH=getResolution()\nlocal cx,cy=getCursor() local pr=getCursorReleased() local Out=\"\"\n"
+  h1[#h1+1]=string.format("local Bgr,Bgg,Bgb=%f,%f,%f\n",P.bgr,P.bgg,P.bgb)
+  h1[#h1+1]=string.format("local Txr,Txg,Txb=%f,%f,%f\n",P.txr,P.txg,P.txb)
+  h1[#h1+1]=string.format("local Hdr,Hdg,Hdb=%f,%f,%f\n",P.hdr,P.hdg,P.hdb)
+  h1[#h1+1]=string.format("local PHr,PHg,PHb=%f,%f,%f\n",P.phdr,P.phdg,P.phdb)
+  h1[#h1+1]=string.format("local Lnr,Lng,Lnb=%f,%f,%f\n",P.lnr,P.lng,P.lnb)
+  h1[#h1+1]=string.format("local BNfr,BNfg,BNfb=%f,%f,%f local BNsr,BNsg,BNsb=%f,%f,%f\n",P.bnfr,P.bnfg,P.bnfb,P.bnsr,P.bnsg,P.bnsb)
+  h1[#h1+1]=string.format("local BHfr,BHfg,BHfb=%f,%f,%f local BHsr,BHsg,BHsb=%f,%f,%f\n",P.bhfr,P.bhfg,P.bhfb,P.bhsr,P.bhsg,P.bhsb)
+  h1[#h1+1]=string.format("local BDfr,BDfg,BDfb=%f,%f,%f local BDsr,BDsg,BDsb=%f,%f,%f local BDtr,BDtg,BDtb=%f,%f,%f\n",P.bdfr,P.bdfg,P.bdfb,P.bdsr,P.bdsg,P.bdsb,P.bdtr,P.bdtg,P.bdtb)
+  h1[#h1+1]=string.format("local FTr,FTg,FTb=%f,%f,%f\n",P.ftr,P.ftg,P.ftb)
+  h1[#h1+1]=string.format("local Ar,Ag,Ab=%f,%f,%f local Nr,Ng,Nb=%f,%f,%f\n",P.ar,P.ag,P.ab,P.nr,P.ng,P.nb)
+  h1[#h1+1]=string.format("local SelElem=%d\n",elem)
+  h1[#h1+1]=string.format("local CurH,CurS,CurV=%f,%f,%f\n",cur.h,cur.s,cur.v)
+  h1[#h1+1]=string.format("local CurR,CurG,CurB=%f,%f,%f\n",cr,cg,cb)
+  h1[#h1+1]="local ProfName=\""..profName.."\"\n"
+  h1[#h1+1]="local LABELS="..lblLit.."\n"
+  h1[#h1+1]="local SWATCHES="..swLit.."\n"
+  h1[#h1+1]="local PROFILES="..pnLit.."\n"
+  S[1]=table.concat(h1)
+  S[2]=[[
+local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
+local Lb=createLayer() local Lc=createLayer() local Lt=createLayer()
+local Lh=createLayer() local Lx=createLayer()
+local fT=loadFont("Montserrat-Light",18) local fS=loadFont("Montserrat-Light",13)
+local fH=loadFont("Montserrat-Light",20) local fB=loadFont("Montserrat-Light",22)
+setDefaultFillColor(Lt,Shape_Text,Txr,Txg,Txb,1)
+setDefaultFillColor(Lh,Shape_Text,Ar,Ag,Ab,1)
+setDefaultFillColor(Lx,Shape_Text,Hdr,Hdg,Hdb,1)
+setDefaultStrokeColor(Ll,Shape_Line,Lnr,Lng,Lnb,0.6)
+setDefaultStrokeWidth(Ll,Shape_Line,1)
+setNextFillColor(Lbg,Bgr,Bgg,Bgb,1) addBox(Lbg,0,0,SW,SH)
+local function h2r(h,s,v)
+  h=h%360 local c=v*s local x=c*(1-math.abs((h/60)%2-1)) local m=v-c
+  local r,g,b
+  if     h<60  then r,g,b=c,x,0 elseif h<120 then r,g,b=x,c,0
+  elseif h<180 then r,g,b=0,c,x elseif h<240 then r,g,b=0,x,c
+  elseif h<300 then r,g,b=x,0,c else r,g,b=c,0,x end
+  return r+m,g+m,b+m
+end
+local function Btn(tx,x,y,w,h,en)
+  local hv=(cx>=x and cx<x+w and cy>=y and cy<y+h)
+  if not en then
+    setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7) setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
+    setNextFillColor(Lt,BDtr,BDtg,BDtb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+    addText(Lt,fT,tx,x+w/2,y+h/2) return false
+  elseif hv then
+    setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+  else
+    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+  end
+  return hv and pr
+end
+]]
+  S[3]=[[
+setNextFillColor(Lp,PHr,PHg,PHb,1) setNextStrokeColor(Lp,Lnr,Lng,Lnb,0.8)
+setNextStrokeWidth(Lp,1) addBox(Lp,0,0,SW,32)
+local clX,clW=4,70
+local clHv=(cx>=clX and cx<clX+clW and cy>=4 and cy<28)
+if clHv then setNextFillColor(Lb,0.6,0.15,0.1,0.9) else setNextFillColor(Lb,0.35,0.08,0.05,0.8) end
+setNextStrokeColor(Lb,0.8,0.3,0.2,0.7) setNextStrokeWidth(Lb,1)
+addBoxRounded(Lb,clX,4,clW,24,3)
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,"X CLOSE",clX+clW/2,16)
+if clHv and pr then Out=json.encode({"theme_close"}) end
+setNextTextAlign(Lx,AlignH_Center,AlignV_Middle) addText(Lx,fB,"COLOR THEME SETTINGS",SW/2,16)
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+addText(Lt,fS,"Profile: "..ProfName,SW-8,16)
+addLine(Ll,0,32,SW,32)
+local elX,elW=0,170
+local huX,huW=170,40
+local svX,svW=214,256
+local svH=256
+local vpX=svX+svW+8
+local vpW=SW-vpX
+local bodyY=36 local bodyH=SH-36-36
+]]
+  S[4]=[[
+setNextFillColor(Lp,PHr*0.8,PHg*0.8,PHb*0.8,0.5) addBox(Lp,elX,bodyY,elW,bodyH)
+setNextTextAlign(Lx,AlignH_Center,AlignV_Middle) addText(Lx,fS,"ELEMENTS",elX+elW/2,bodyY+14)
+addLine(Ll,elX,bodyY+28,elX+elW,bodyY+28)
+for i=1,8 do
+  local ey=bodyY+28+(i-1)*30
+  local hv=(cx>=elX and cx<elX+elW and cy>=ey and cy<ey+30)
+  local sel=(i==SelElem)
+  if sel then
+    setNextFillColor(Lp,Ar,Ag,Ab,0.20) setNextStrokeColor(Lp,Ar,Ag,Ab,0.6)
+    setNextStrokeWidth(Lp,1) addBox(Lp,elX+2,ey,elW-4,28)
+  elseif hv then
+    setNextFillColor(Lp,1,1,1,0.06) addBox(Lp,elX+2,ey,elW-4,28)
+  end
+  local sw=SWATCHES[i]
+  setNextFillColor(Lc,sw[1],sw[2],sw[3],1)
+  setNextStrokeColor(Lc,Txr*0.5,Txg*0.5,Txb*0.5,0.5) setNextStrokeWidth(Lc,1)
+  addBoxRounded(Lc,elX+8,ey+5,18,18,3)
+  local L=sel and Lh or Lt
+  if sel then setNextFillColor(Lh,Ar,Ag,Ab,1) end
+  setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,LABELS[i],elX+32,ey+14)
+  if hv and pr then Out=json.encode({"theme_sel_elem",i}) end
+end
+]]
+  S[5]=[[
+local hueY=bodyY+4 local hueH=bodyH-8
+local hStep=hueH/36
+for i=0,35 do
+  local hh=i*10
+  local hr,hg,hb=h2r(hh,1,1)
+  setNextFillColor(Lc,hr,hg,hb,1) addBox(Lc,huX+4,hueY+i*hStep,huW-8,hStep+1)
+  if math.abs(hh-CurH)<5 or (CurH>355 and hh==0) then
+    setNextStrokeColor(Ll,1,1,1,1) setNextStrokeWidth(Ll,2)
+    addBox(Ll,huX+2,hueY+i*hStep,huW-4,hStep)
+  end
+end
+if pr and cx>=huX and cx<huX+huW and cy>=hueY and cy<hueY+hueH then
+  local h=((cy-hueY)/hueH)*360
+  Out=json.encode({"theme_set_hue",h})
+end
+local svY=bodyY+4
+local cellW=svW/16 local cellH=svH/16
+for sy=0,15 do
+  for sx=0,15 do
+    local s=sx/15 local v=1-sy/15
+    local gr,gg,gb=h2r(CurH,s,v)
+    setNextFillColor(Lc,gr,gg,gb,1) addBox(Lc,svX+sx*cellW,svY+sy*cellH,cellW+0.5,cellH+0.5)
+  end
+end
+local chx=svX+CurS*15*cellW+cellW/2
+local chy=svY+(1-CurV)*15*cellH+cellH/2
+setNextStrokeColor(Ll,1,1,1,0.9) setNextStrokeWidth(Ll,1)
+addLine(Ll,chx-8,chy,chx+8,chy) addLine(Ll,chx,chy-8,chx,chy+8)
+setNextStrokeColor(Ll,0,0,0,0.6) setNextStrokeWidth(Ll,1)
+addLine(Ll,chx-7,chy-1,chx+7,chy-1) addLine(Ll,chx-1,chy-7,chx-1,chy+7)
+if pr and cx>=svX and cx<svX+svW and cy>=svY and cy<svY+svH then
+  local ns=(cx-svX)/svW local nv=1-(cy-svY)/svH
+  Out=json.encode({"theme_set_sv",ns,nv})
+end
+]]
+  local vpX = 214 + 256 + 8
+  S[6]=string.format([[
+local valY=bodyY+8
+setNextFillColor(Lc,CurR,CurG,CurB,1)
+setNextStrokeColor(Lc,Txr*0.5,Txg*0.5,Txb*0.5,0.6) setNextStrokeWidth(Lc,1)
+addBoxRounded(Lc,%d+8,valY,vpW-16,60,6)
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+local pv=CurR+CurG+CurB
+if pv>1.5 then setNextFillColor(Lt,0,0,0,0.9) else setNextFillColor(Lt,1,1,1,0.9) end
+addText(Lt,fH,LABELS[SelElem],%d+vpW/2,valY+30)
+valY=valY+70
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"RGB",vpX+8,valY)
+setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fT,string.format("R: %%d   G: %%d   B: %%d",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),vpX+8,valY+14)
+valY=valY+38
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"HSV",vpX+8,valY)
+setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fT,string.format("H: %%d   S: %%d%%%%   V: %%d%%%%",math.floor(CurH+0.5),math.floor(CurS*100+0.5),math.floor(CurV*100+0.5)),vpX+8,valY+14)
+valY=valY+38
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"HEX",vpX+8,valY)
+setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fT,string.format("#%%02X%%02X%%02X",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),vpX+8,valY+14)
+valY=valY+42
+setNextFillColor(Lt,Txr*0.4,Txg*0.4,Txb*0.4,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"Chat: theme ELEMENT #HEX",vpX+8,valY)
+setNextFillColor(Lt,Txr*0.4,Txg*0.4,Txb*0.4,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"Chat: theme ELEMENT R G B",vpX+8,valY+14)
+]], vpX, vpX)
+  S[7]=[[
+addLine(Ll,0,SH-36,SW,SH-36)
+setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,SH-36,SW,36)
+local px=8 local py=SH-30 local pH=22 local pG=4
+for i,pn in ipairs(PROFILES) do
+  local tw=math.min(100,math.max(50,#pn*8+16))
+  if px+tw>SW-280 then break end
+  local hv=(cx>=px and cx<px+tw and cy>=py and cy<py+pH)
+  local active=(pn==ProfName)
+  if active then
+    setNextFillColor(Lb,Ar*0.3,Ag*0.3,Ab*0.3,0.9) setNextStrokeColor(Lb,Ar,Ag,Ab,0.9)
+  elseif hv then
+    setNextFillColor(Lb,BHfr,BHfg,BHfb,0.7) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.7)
+  else
+    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.5) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.5)
+  end
+  setNextStrokeWidth(Lb,1) addBoxRounded(Lb,px,py,tw,pH,3)
+  setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,pn,px+tw/2,py+pH/2)
+  if hv and pr then Out=json.encode({"theme_load",pn}) end
+  px=px+tw+pG
+end
+local abX=SW-270
+if Btn("+ New",abX,py,55,pH,true) then Out=json.encode({"theme_new"}) end abX=abX+59
+if Btn("Save",abX,py,50,pH,true) then Out=json.encode({"theme_save"}) end abX=abX+54
+if Btn("Delete",abX,py,55,pH,#PROFILES>1) then Out=json.encode({"theme_delete"}) end abX=abX+59
+if Btn("Reset",abX,py,50,pH,true) then Out=json.encode({"theme_reset"}) end
+setOutput(Out) requestAnimationFrame(5)
+]]
+  return table.concat(S)
+end
+
 function SetStatus(msg,dur)
   system.print("[NAV] "..msg)
   StatusMsg=msg; StatusExpiry=system.getArkTime()+(dur or 5)
@@ -787,15 +1017,15 @@ function DrawHUD()
   -- ── Theme-derived CSS colors ────────────────────────────────────
   local P=Palette
   local function rgba(r,g,b,a) return string.format("rgba(%d,%d,%d,%.2f)",math.floor(r*255),math.floor(g*255),math.floor(b*255),a) end
-  local cA  = string.format("rgb(%d,%d,%d)", P.ar*255, P.ag*255, P.ab*255)
-  local cBg = string.format("rgba(%d,%d,%d,0.93)", P.bgr*255, P.bgg*255, P.bgb*255)
+  local cA  = string.format("rgb(%d,%d,%d)", math.floor(P.ar*255), math.floor(P.ag*255), math.floor(P.ab*255))
+  local cBg = string.format("rgba(%d,%d,%d,0.93)", math.floor(P.bgr*255), math.floor(P.bgg*255), math.floor(P.bgb*255))
   local cBd = rgba(P.lnr, P.lng, P.lnb, 0.45)
   local cPH = rgba(P.phdr, P.phdg, P.phdb, 0.60)
   local cSl = rgba(P.ar, P.ag, P.ab, 0.35)
   local cDv = rgba(P.lnr*0.6, P.lng*0.6, P.lnb*0.6, 0.25)
   local cNB = rgba(P.phdr*0.6, P.phdg*0.6, P.phdb*0.6, 0.60)
-  local cFt = string.format("rgb(%d,%d,%d)", P.ftr*255, P.ftg*255, P.ftb*255)
-  local cRi = string.format("rgb(%d,%d,%d)", P.txr*0.55*255, P.txg*0.55*255, P.txb*0.76*255)
+  local cFt = string.format("rgb(%d,%d,%d)", math.floor(P.ftr*255), math.floor(P.ftg*255), math.floor(P.ftb*255))
+  local cRi = string.format("rgb(%d,%d,%d)", math.floor(P.txr*0.55*255), math.floor(P.txg*0.55*255), math.floor(P.txb*0.76*255))
   local ls15=math.floor(15*sc)
 
   local h={}
@@ -999,259 +1229,12 @@ addText(Lt,fS,"Type: theme",SW/2,SH/2+14)
     return
   end
   local ok2,result=pcall(BuildPickerScript)
-  if not ok2 then system.print("[NAV] picker render error: "..tostring(result)); return end
+  if not ok2 then system.print("[NAV] picker err: "..tostring(result)); return end
   screen.setRenderScript(result)
 end
 
-function BuildPickerScript()
-  local P=Palette
-  local slots=ThemeSlots
-  local elem=PickerElem
-  local cur=slots[elem]
-  local cr,cg,cb=HSV2RGB(cur.h,cur.s,cur.v)
-  local profName=GetActiveProfileName()
-  local profNames=GetThemeProfiles()
-
-  local swatches={}
-  for i=1,8 do
-    local r,g,b=HSV2RGB(slots[i].h,slots[i].s,slots[i].v)
-    table.insert(swatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
-  end
-  local swLit="{"..table.concat(swatches,",").."}"
-
-  local lblLit="{"
-  for i,l in ipairs(THEME_SLOT_LABELS) do
-    if i>1 then lblLit=lblLit.."," end
-    lblLit=lblLit..string.format("%q",l)
-  end
-  lblLit=lblLit.."}"
-
-  local pnLit="{"
-  for i,n in ipairs(profNames) do
-    if i>1 then pnLit=pnLit.."," end
-    pnLit=pnLit..string.format("%q",n)
-  end
-  pnLit=pnLit.."}"
-
-  local S={}
-  S[1]=string.format([[
-local json=require('dkjson')
-local SW,SH=getResolution()
-local cx,cy=getCursor() local pr=getCursorReleased() local Out=""
-local Bgr,Bgg,Bgb=%f,%f,%f
-local Txr,Txg,Txb=%f,%f,%f
-local Hdr,Hdg,Hdb=%f,%f,%f
-local PHr,PHg,PHb=%f,%f,%f
-local Lnr,Lng,Lnb=%f,%f,%f
-local BNfr,BNfg,BNfb=%f,%f,%f local BNsr,BNsg,BNsb=%f,%f,%f
-local BHfr,BHfg,BHfb=%f,%f,%f local BHsr,BHsg,BHsb=%f,%f,%f
-local BDfr,BDfg,BDfb=%f,%f,%f local BDsr,BDsg,BDsb=%f,%f,%f local BDtr,BDtg,BDtb=%f,%f,%f
-local FTr,FTg,FTb=%f,%f,%f
-local Ar,Ag,Ab=%f,%f,%f local Nr,Ng,Nb=%f,%f,%f
-local SelElem=%d
-local CurH,CurS,CurV=%f,%f,%f
-local CurR,CurG,CurB=%f,%f,%f
-local ProfName=%q
-local LABELS=%s
-local SWATCHES=%s
-local PROFILES=%s
-]],
-    P.bgr,P.bgg,P.bgb, P.txr,P.txg,P.txb, P.hdr,P.hdg,P.hdb,
-    P.phdr,P.phdg,P.phdb, P.lnr,P.lng,P.lnb,
-    P.bnfr,P.bnfg,P.bnfb, P.bnsr,P.bnsg,P.bnsb,
-    P.bhfr,P.bhfg,P.bhfb, P.bhsr,P.bhsg,P.bhsb,
-    P.bdfr,P.bdfg,P.bdfb, P.bdsr,P.bdsg,P.bdsb, P.bdtr,P.bdtg,P.bdtb,
-    P.ftr,P.ftg,P.ftb,
-    P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
-    elem, cur.h,cur.s,cur.v, cr,cg,cb,
-    profName, lblLit, swLit, pnLit)
-
-  S[2]=[[
-local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
-local Lb=createLayer() local Lc=createLayer() local Lt=createLayer()
-local Lh=createLayer() local Lx=createLayer()
-local fT=loadFont("Montserrat-Light",18) local fS=loadFont("Montserrat-Light",13)
-local fH=loadFont("Montserrat-Light",20) local fB=loadFont("Montserrat-Light",22)
-setDefaultFillColor(Lt,Shape_Text,Txr,Txg,Txb,1)
-setDefaultFillColor(Lh,Shape_Text,Ar,Ag,Ab,1)
-setDefaultFillColor(Lx,Shape_Text,Hdr,Hdg,Hdb,1)
-setDefaultStrokeColor(Ll,Shape_Line,Lnr,Lng,Lnb,0.6)
-setDefaultStrokeWidth(Ll,Shape_Line,1)
-setNextFillColor(Lbg,Bgr,Bgg,Bgb,1) addBox(Lbg,0,0,SW,SH)
-local function h2r(h,s,v)
-  h=h%360 local c=v*s local x=c*(1-math.abs((h/60)%2-1)) local m=v-c
-  local r,g,b
-  if     h<60  then r,g,b=c,x,0 elseif h<120 then r,g,b=x,c,0
-  elseif h<180 then r,g,b=0,c,x elseif h<240 then r,g,b=0,x,c
-  elseif h<300 then r,g,b=x,0,c else r,g,b=c,0,x end
-  return r+m,g+m,b+m
-end
-local function Btn(tx,x,y,w,h,en)
-  local hv=(cx>=x and cx<x+w and cy>=y and cy<y+h)
-  if not en then
-    setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7) setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5)
-    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextFillColor(Lt,BDtr,BDtg,BDtb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-    addText(Lt,fT,tx,x+w/2,y+h/2) return false
-  elseif hv then
-    setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1)
-    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
-  else
-    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1)
-    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
-  end
-  return hv and pr
-end
-]]
-
-  S[3]=[[
-setNextFillColor(Lp,PHr,PHg,PHb,1) setNextStrokeColor(Lp,Lnr,Lng,Lnb,0.8)
-setNextStrokeWidth(Lp,1) addBox(Lp,0,0,SW,32)
-local clX,clW=4,70
-local clHv=(cx>=clX and cx<clX+clW and cy>=4 and cy<28)
-if clHv then setNextFillColor(Lb,0.6,0.15,0.1,0.9) else setNextFillColor(Lb,0.35,0.08,0.05,0.8) end
-setNextStrokeColor(Lb,0.8,0.3,0.2,0.7) setNextStrokeWidth(Lb,1)
-addBoxRounded(Lb,clX,4,clW,24,3)
-setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,"X CLOSE",clX+clW/2,16)
-if clHv and pr then Out=json.encode({"theme_close"}) end
-setNextTextAlign(Lx,AlignH_Center,AlignV_Middle) addText(Lx,fB,"COLOR THEME SETTINGS",SW/2,16)
-setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-addText(Lt,fS,"Profile: "..ProfName,SW-8,16)
-addLine(Ll,0,32,SW,32)
-local elX,elW=0,170
-local huX,huW=170,40
-local svX,svW=214,256
-local svH=256
-local vpX=svX+svW+8
-local vpW=SW-vpX
-local bodyY=36 local bodyH=SH-36-36
-]]
-
-  S[4]=[[
-setNextFillColor(Lp,PHr*0.8,PHg*0.8,PHb*0.8,0.5) addBox(Lp,elX,bodyY,elW,bodyH)
-setNextTextAlign(Lx,AlignH_Center,AlignV_Middle) addText(Lx,fS,"ELEMENTS",elX+elW/2,bodyY+14)
-addLine(Ll,elX,bodyY+28,elX+elW,bodyY+28)
-for i=1,8 do
-  local ey=bodyY+28+(i-1)*30
-  local hv=(cx>=elX and cx<elX+elW and cy>=ey and cy<ey+30)
-  local sel=(i==SelElem)
-  if sel then
-    setNextFillColor(Lp,Ar,Ag,Ab,0.20) setNextStrokeColor(Lp,Ar,Ag,Ab,0.6)
-    setNextStrokeWidth(Lp,1) addBox(Lp,elX+2,ey,elW-4,28)
-  elseif hv then
-    setNextFillColor(Lp,1,1,1,0.06) addBox(Lp,elX+2,ey,elW-4,28)
-  end
-  local sw=SWATCHES[i]
-  setNextFillColor(Lc,sw[1],sw[2],sw[3],1)
-  setNextStrokeColor(Lc,Txr*0.5,Txg*0.5,Txb*0.5,0.5) setNextStrokeWidth(Lc,1)
-  addBoxRounded(Lc,elX+8,ey+5,18,18,3)
-  local L=sel and Lh or Lt
-  if sel then setNextFillColor(Lh,Ar,Ag,Ab,1) end
-  setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,LABELS[i],elX+32,ey+14)
-  if hv and pr then Out=json.encode({"theme_sel_elem",i}) end
-end
-]]
-
-  S[5]=[[
-local hueY=bodyY+4 local hueH=bodyH-8
-local hStep=hueH/36
-for i=0,35 do
-  local hh=i*10
-  local hr,hg,hb=h2r(hh,1,1)
-  setNextFillColor(Lc,hr,hg,hb,1) addBox(Lc,huX+4,hueY+i*hStep,huW-8,hStep+1)
-  if math.abs(hh-CurH)<5 or (CurH>355 and hh==0) then
-    setNextStrokeColor(Ll,1,1,1,1) setNextStrokeWidth(Ll,2)
-    addBox(Ll,huX+2,hueY+i*hStep,huW-4,hStep)
-  end
-end
-if pr and cx>=huX and cx<huX+huW and cy>=hueY and cy<hueY+hueH then
-  local h=((cy-hueY)/hueH)*360
-  Out=json.encode({"theme_set_hue",h})
-end
-local svY=bodyY+4
-local cellW=svW/16 local cellH=svH/16
-for sy=0,15 do
-  for sx=0,15 do
-    local s=sx/15 local v=1-sy/15
-    local gr,gg,gb=h2r(CurH,s,v)
-    setNextFillColor(Lc,gr,gg,gb,1) addBox(Lc,svX+sx*cellW,svY+sy*cellH,cellW+0.5,cellH+0.5)
-  end
-end
-local chx=svX+CurS*15*cellW+cellW/2
-local chy=svY+(1-CurV)*15*cellH+cellH/2
-setNextStrokeColor(Ll,1,1,1,0.9) setNextStrokeWidth(Ll,1)
-addLine(Ll,chx-8,chy,chx+8,chy) addLine(Ll,chx,chy-8,chx,chy+8)
-setNextStrokeColor(Ll,0,0,0,0.6) setNextStrokeWidth(Ll,1)
-addLine(Ll,chx-7,chy-1,chx+7,chy-1) addLine(Ll,chx-1,chy-7,chx-1,chy+7)
-if pr and cx>=svX and cx<svX+svW and cy>=svY and cy<svY+svH then
-  local ns=(cx-svX)/svW local nv=1-(cy-svY)/svH
-  Out=json.encode({"theme_set_sv",ns,nv})
-end
-]]
-
-  S[6]=string.format([[
-local valY=bodyY+8
-setNextFillColor(Lc,CurR,CurG,CurB,1)
-setNextStrokeColor(Lc,Txr*0.5,Txg*0.5,Txb*0.5,0.6) setNextStrokeWidth(Lc,1)
-addBoxRounded(Lc,%d+8,valY,vpW-16,60,6)
-setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-local pv=CurR+CurG+CurB
-if pv>1.5 then setNextFillColor(Lt,0,0,0,0.9) else setNextFillColor(Lt,1,1,1,0.9) end
-addText(Lt,fH,LABELS[SelElem],%d+vpW/2,valY+30)
-valY=valY+70
-setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fS,"RGB",vpX+8,valY)
-setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fT,string.format("R: %%d   G: %%d   B: %%d",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),vpX+8,valY+14)
-valY=valY+38
-setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fS,"HSV",vpX+8,valY)
-setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fT,string.format("H: %%d°   S: %%d%%%%   V: %%d%%%%",math.floor(CurH+0.5),math.floor(CurS*100+0.5),math.floor(CurV*100+0.5)),vpX+8,valY+14)
-valY=valY+38
-setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fS,"HEX",vpX+8,valY)
-setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fT,string.format("#%%02X%%02X%%02X",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),vpX+8,valY+14)
-valY=valY+42
-setNextFillColor(Lt,Txr*0.4,Txg*0.4,Txb*0.4,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fS,"Chat: theme ELEMENT #HEX",vpX+8,valY)
-setNextFillColor(Lt,Txr*0.4,Txg*0.4,Txb*0.4,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
-addText(Lt,fS,"Chat: theme ELEMENT R G B",vpX+8,valY+14)
-]], vpX, vpX)
-
-  S[7]=[[
-addLine(Ll,0,SH-36,SW,SH-36)
-setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,SH-36,SW,36)
-local px=8 local py=SH-30 local pH=22 local pG=4
-for i,pn in ipairs(PROFILES) do
-  local tw=math.min(100,math.max(50,#pn*8+16))
-  if px+tw>SW-280 then break end
-  local hv=(cx>=px and cx<px+tw and cy>=py and cy<py+pH)
-  local active=(pn==ProfName)
-  if active then
-    setNextFillColor(Lb,Ar*0.3,Ag*0.3,Ab*0.3,0.9) setNextStrokeColor(Lb,Ar,Ag,Ab,0.9)
-  elseif hv then
-    setNextFillColor(Lb,BHfr,BHfg,BHfb,0.7) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.7)
-  else
-    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.5) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.5)
-  end
-  setNextStrokeWidth(Lb,1) addBoxRounded(Lb,px,py,tw,pH,3)
-  setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,pn,px+tw/2,py+pH/2)
-  if hv and pr then Out=json.encode({"theme_load",pn}) end
-  px=px+tw+pG
-end
-local abX=SW-270
-if Btn("+ New",abX,py,55,pH,true) then Out=json.encode({"theme_new"}) end abX=abX+59
-if Btn("Save",abX,py,50,pH,true) then Out=json.encode({"theme_save"}) end abX=abX+54
-if Btn("Delete",abX,py,55,pH,#PROFILES>1) then Out=json.encode({"theme_delete"}) end abX=abX+59
-if Btn("Reset",abX,py,50,pH,true) then Out=json.encode({"theme_reset"}) end
-setOutput(Out) requestAnimationFrame(5)
-]]
-  return table.concat(S)
-end
+-- BuildPickerScript is defined in library.onStart to stay within per-handler local variable limits
+-- (moved there to avoid DU's per-handler CPU/local-variable budget exhaustion)
 
 -- ── Init ──────────────────────────────────────────────────────
 do
@@ -1352,7 +1335,7 @@ elseif act=="theme_reset" then
   SetStatus("Theme reset to defaults")
 end
 DrawPickerScreen()
-DrawHUD()
+if not ShowThemePicker then DrawHUD() end
 
 
 --[[@
@@ -1398,8 +1381,7 @@ if not screen then SetStatus("No screen connected — theme via chat only"); ret
 ShowThemePicker=not ShowThemePicker
 DrawPickerScreen()
 if ShowThemePicker then SetStatus("Theme picker opened on screen")
-else SetStatus("Theme picker closed") end
-DrawHUD()
+else SetStatus("Theme picker closed"); DrawHUD() end
 
 
 --[[@

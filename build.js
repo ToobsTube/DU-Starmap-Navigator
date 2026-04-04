@@ -23,6 +23,7 @@ const CONFIGS = {
     slots: {
        '0': 'databank',
        '1': 'receiver', '2': 'emitter',
+       '3': 'screen',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
