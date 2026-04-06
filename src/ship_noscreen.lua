@@ -40,17 +40,22 @@ end
 function CalcTravelTime(dist)
   if not dist or dist<=0 then return nil end
   local V=(CalcSpeed or 30000)/3.6   -- km/h → m/s
-  local A=CalcAccel or 5
-  if A<=0 then return dist/math.max(V,1) end
-  local d_accel=V*V/(2*A)            -- distance to reach cruise speed
-  if 2*d_accel>=dist then
-    -- can't reach cruise speed — triangle profile
-    return 2*math.sqrt(dist/A)
+  local mass=construct and construct.getMass() or 0
+  local Aa=CalcThrust and mass>0 and (CalcThrust*1000/mass) or (CalcAccel or 5)
+  local brakeN=construct and construct.getMaxBrake and construct.getMaxBrake() or 0
+  local Ad=CalcBrake and CalcBrake>0 and (CalcBrake*1000/math.max(mass,1))
+         or (brakeN>0 and mass>0 and brakeN/mass)
+         or Aa  -- fallback: symmetric (same as turn-and-burn)
+  if Aa<=0 then return dist/math.max(V,1) end
+  local d_accel=V*V/(2*Aa)
+  local d_decel=V*V/(2*Ad)
+  if d_accel+d_decel>=dist then
+    -- triangle profile — asymmetric arms
+    local Vp=math.sqrt(2*dist/(1/Aa+1/Ad))
+    return Vp/Aa+Vp/Ad
   else
-    local t_accel=V/A                -- time to accel (= time to decel)
-    local d_cruise=dist-2*d_accel
-    local t_cruise=d_cruise/V
-    return 2*t_accel+t_cruise
+    local d_cruise=dist-d_accel-d_decel
+    return V/Aa+V/Ad+d_cruise/V
   end
 end
 function ParsePos(s)
@@ -569,8 +574,10 @@ local VERSION="v2.0.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 AutopilotCmd=""        --export: Autopilot command prefix e.g. /goto or / (blank = disabled)
-CalcSpeed   =30000    --export: Time Calc cruise speed in km/h (e.g. 30000)
-CalcAccel   =5        --export: Time Calc ship acceleration in m/s2 (e.g. 5)
+CalcSpeed   =30000    --export: Time Calc max speed in space in km/h (e.g. 30000)
+CalcThrust  =0        --export: Time Calc total thrust in kN from ship stats (0 = use CalcAccel fallback)
+CalcBrake   =0        --export: Time Calc total brake force in kN from ship stats (0 = auto-detect, fallback to thrust)
+CalcAccel   =5        --export: Time Calc fallback acceleration in m/s2 — ignored if CalcThrust is set
 AccentR=0    --export: HUD accent color Red 0-255 (default 0)
 AccentG=200  --export: HUD accent color Green 0-255 (default 200)
 AccentB=255  --export: HUD accent color Blue 0-255 (default 255)
@@ -990,8 +997,19 @@ function GetSubItems()
 
   else -- TIME CALC
     local V=(CalcSpeed or 30000)/3.6
-    local A=CalcAccel or 5
-    table.insert(items,{type="info",label=string.format("Speed: %g km/h  |  Accel: %g m/s\xc2\xb2",(CalcSpeed or 30000),(CalcAccel or 5))})
+    local mass=construct and construct.getMass() or 0
+    local Aa=CalcThrust and mass>0 and (CalcThrust*1000/mass) or (CalcAccel or 5)
+    local brakeN=construct and construct.getMaxBrake and construct.getMaxBrake() or 0
+    local Ad=CalcBrake and CalcBrake>0 and (CalcBrake*1000/math.max(mass,1))
+           or (brakeN>0 and mass>0 and brakeN/mass) or Aa
+    local dynLabel
+    if CalcThrust and CalcThrust>0 then
+      dynLabel=string.format("Thrust: %g kN (%.1f m/s\xc2\xb2)  Brake: %g kN (%.1f m/s\xc2\xb2)",
+        CalcThrust,Aa, (CalcBrake and CalcBrake>0) and CalcBrake or brakeN/1000, Ad)
+    else
+      dynLabel=string.format("Accel: %g m/s\xc2\xb2",(CalcAccel or 5))
+    end
+    table.insert(items,{type="info",label=string.format("Speed: %g km/h  |  %s",(CalcSpeed or 30000),dynLabel)})
     -- Current target
     if NavTarget and NavTarget.c then
       local tp=ParsePos(NavTarget.c); local cp=GetCurrentPos()

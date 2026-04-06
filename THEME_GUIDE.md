@@ -254,13 +254,13 @@ The theme is saved to the local databank and applied immediately.
 
 If you previously customized the `AccentR`, `AccentG`, `AccentB` export parameters on the Ship Screen or Ship NoScreen PBs, your custom accent color is automatically migrated on first load. The system converts your RGB accent to HSV and creates a "Migrated" profile. No action needed — your colors are preserved.
 
-The `AccentR/G/B` export parameters still exist for backwards compatibility but are only used as a fallback if no theme profile is saved in the databank.
+The `AccentR/G/B` export parameters still exist for backwards compatibility. They influence the starting colors before the picker is ever opened, but the first time you open the Theme Editor it automatically saves the current theme to the databank — after that, `AccentR/G/B` are permanently superseded and have no further effect.
 
 ---
 
 ## Tips
 
-- **Live preview**: Color changes from the picker apply instantly to the preview swatch. Close the picker to see them on the main UI.
+- **Live preview**: Color changes apply instantly to both the preview swatch and the main UI as you drag — no need to close the picker to see the effect. The left half of the swatch shows your last saved color; the right half shows the current live change.
 - **Fine-tuning**: The SV grid gives you 256 possible shade variations per hue. For exact colors, use chat: `theme accent #1A8CCC`.
 - **Sharing across constructs**: Use `theme export` / `theme import` to copy themes between ships, bases, or even between friends.
 - **Org consistency**: Set the theme on the OrgBase Admin PB — the Sync PB inherits it automatically. All org members see the same colors when they sync.

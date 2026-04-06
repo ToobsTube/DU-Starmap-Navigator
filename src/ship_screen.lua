@@ -41,13 +41,21 @@ end
 function CalcTravelTime(dist)
   if not dist or dist<=0 then return nil end
   local V=(CalcSpeed or 30000)/3.6
-  local A=CalcAccel or 5
-  if A<=0 then return dist/math.max(V,1) end
-  local d_accel=V*V/(2*A)
-  if 2*d_accel>=dist then return 2*math.sqrt(dist/A)
+  local mass=construct and construct.getMass() or 0
+  local Aa=CalcThrust and mass>0 and (CalcThrust*1000/mass) or (CalcAccel or 5)
+  local brakeN=construct and construct.getMaxBrake and construct.getMaxBrake() or 0
+  local Ad=CalcBrake and CalcBrake>0 and (CalcBrake*1000/math.max(mass,1))
+         or (brakeN>0 and mass>0 and brakeN/mass)
+         or Aa  -- fallback: symmetric (same as turn-and-burn)
+  if Aa<=0 then return dist/math.max(V,1) end
+  local d_accel=V*V/(2*Aa)
+  local d_decel=V*V/(2*Ad)
+  if d_accel+d_decel>=dist then
+    -- triangle profile — find peak speed given asymmetric arms
+    local Vp=math.sqrt(2*dist/(1/Aa+1/Ad))
+    return Vp/Aa+Vp/Ad
   else
-    local t_accel=V/A
-    return 2*t_accel+(dist-2*d_accel)/V
+    return V/Aa+V/Ad+(dist-d_accel-d_decel)/V
   end
 end
 function ParsePos(s)
@@ -308,8 +316,10 @@ Atlas        =nil
 CustomAtlas ="atlas"   --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 AutopilotCmd=""        --export: Autopilot command prefix e.g. /goto or / (blank = disabled)
-CalcSpeed   =30000    --export: Time Calc cruise speed in km/h (e.g. 30000)
-CalcAccel   =5        --export: Time Calc ship acceleration in m/s2 (e.g. 5)
+CalcSpeed   =30000    --export: Time Calc max speed in space in km/h (e.g. 30000)
+CalcThrust  =0        --export: Time Calc total thrust in kN from ship stats (0 = use CalcAccel fallback)
+CalcBrake   =0        --export: Time Calc total brake force in kN from ship stats (0 = auto-detect, fallback to thrust)
+CalcAccel   =5        --export: Time Calc fallback acceleration in m/s2 — ignored if CalcThrust is set
 AccentR=0    --export: Screen accent color Red 0-255 (default 0)
 AccentG=200  --export: Screen accent color Green 0-255 (default 200)
 AccentB=255  --export: Screen accent color Blue 0-255 (default 255)
