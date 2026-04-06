@@ -555,10 +555,9 @@ end
 
 function SendAutopilot(name, coords)
   if not coords or coords=="" then return end
-  -- Arch HUD databank integration: write destination for userclass to pick up
-  if databank then
-    local label = name or "Navigator"
-    databank.setStringValue("nav_arch_dest", label.."|"..coords)
+  -- Arch HUD databank integration: write to Arch's databank (slot 4, optional)
+  if archbank then
+    archbank.setStringValue("nav_arch_dest", (name or "Navigator").."|"..coords)
   end
   -- Legacy AutopilotCmd (chat command fallback)
   if AutopilotCmd~="" then
