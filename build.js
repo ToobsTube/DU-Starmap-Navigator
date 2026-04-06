@@ -23,6 +23,7 @@ const CONFIGS = {
     slots: {
        '0': 'databank',
        '1': 'receiver', '2': 'emitter',
+       '3': 'screen',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
@@ -142,6 +143,15 @@ const TOOLS = {
        '0': 'screen',   '1': 'databank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
+    }
+  },
+  wipe_databanks: {
+    src: 'tools/wipe_databanks.lua',
+    output: 'tools/Wipe_Databanks.txt',
+    slots: {
+      '1': 'databank1', '2': 'databank2',
+      '-1': 'unit', '-2': 'construct', '-3': 'player',
+      '-4': 'system', '-5': 'library',
     }
   },
 };

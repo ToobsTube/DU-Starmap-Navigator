@@ -6,6 +6,7 @@
 --   Slot 0: databank   (Databank)
 --   Slot 1: receiver   (Receiver)
 --   Slot 2: emitter    (Emitter)
+--   Slot 3: screen     (Screen Unit — OPTIONAL, for theme picker)
 --
 -- Output via Lua chat. AR marker via system.setWaypoint().
 -- Alt+Up/Down = browse menu  |  Alt+Right = activate  |  Alt+Shift+Ins = toggle HUD
@@ -83,6 +84,199 @@ function CalcDist(p1,p2)
   return math.sqrt(dx*dx+dy*dy+dz*dz)
 end
 function Trim(s) return (s or ""):match("^%s*(.-)%s*$") end
+
+-- ── Theme utilities ─────────────────────────────────────────
+THEME_SLOT_NAMES={"accent","background","text","header","btnNormal","btnHover","selected","route"}
+THEME_SLOT_LABELS={"Accent","Background","Text","Header","Btn Normal","Btn Hover","Selected","Route"}
+
+function HSV2RGB(h,s,v)
+  h=h%360; local c=v*s; local x=c*(1-math.abs((h/60)%2-1)); local m=v-c
+  local r,g,b
+  if     h<60  then r,g,b=c,x,0
+  elseif h<120 then r,g,b=x,c,0
+  elseif h<180 then r,g,b=0,c,x
+  elseif h<240 then r,g,b=0,x,c
+  elseif h<300 then r,g,b=x,0,c
+  else              r,g,b=c,0,x end
+  return r+m,g+m,b+m
+end
+
+function RGB2HSV(r,g,b)
+  local mx=math.max(r,g,b); local mn=math.min(r,g,b); local d=mx-mn
+  local h,s,v=0, mx>0 and d/mx or 0, mx
+  if d>0 then
+    if     mx==r then h=60*((g-b)/d%6)
+    elseif mx==g then h=60*((b-r)/d+2)
+    else              h=60*((r-g)/d+4) end
+  end
+  return h,s,v
+end
+
+function Hex2RGB(hex)
+  hex=hex:gsub("^#","")
+  if #hex~=6 then return nil end
+  local r=tonumber(hex:sub(1,2),16)
+  local g=tonumber(hex:sub(3,4),16)
+  local b=tonumber(hex:sub(5,6),16)
+  if not r or not g or not b then return nil end
+  return r/255,g/255,b/255
+end
+
+function RGB2Hex(r,g,b)
+  return string.format("#%02X%02X%02X",math.floor(r*255+0.5),math.floor(g*255+0.5),math.floor(b*255+0.5))
+end
+
+function DefaultShipTheme()
+  return {
+    {h=195,s=1.0,v=1.0},    -- accent (cyan)
+    {h=210,s=0.80,v=0.04},  -- background
+    {h=0,  s=0,  v=0.82},   -- text
+    {h=48, s=1.0,v=1.0},    -- header (gold)
+    {h=195,s=1.0,v=0.40},   -- btnNormal
+    {h=195,s=0.85,v=0.65},  -- btnHover
+    {h=195,s=1.0,v=0.86},   -- selected
+    {h=140,s=0.70,v=1.0},   -- route (green)
+  }
+end
+
+function DeriveTheme(slots)
+  local p={}
+  -- Accent
+  p.ar,p.ag,p.ab=HSV2RGB(slots[1].h,slots[1].s,slots[1].v)
+  local mx=math.max(p.ar,p.ag,p.ab,0.001)
+  p.nr,p.ng,p.nb=p.ar/mx,p.ag/mx,p.ab/mx
+  -- Background
+  p.bgr,p.bgg,p.bgb=HSV2RGB(slots[2].h,slots[2].s,slots[2].v)
+  -- Text
+  p.txr,p.txg,p.txb=HSV2RGB(slots[3].h,slots[3].s,slots[3].v)
+  -- Header
+  p.hdr,p.hdg,p.hdb=HSV2RGB(slots[4].h,slots[4].s,slots[4].v)
+  -- Status (fixed orange for visibility)
+  p.str,p.stg,p.stb=1.0,0.78,0.2
+  -- Lines (derived from accent)
+  p.lnr,p.lng,p.lnb=HSV2RGB(slots[1].h,slots[1].s*0.5,slots[1].v*0.4)
+  -- Button normal fill + stroke
+  p.bnfr,p.bnfg,p.bnfb=HSV2RGB(slots[5].h,slots[5].s,slots[5].v)
+  p.bnsr,p.bnsg,p.bnsb=HSV2RGB(slots[5].h,slots[5].s*0.85,math.min(slots[5].v*1.6,1))
+  -- Button hover fill + stroke
+  p.bhfr,p.bhfg,p.bhfb=HSV2RGB(slots[6].h,slots[6].s,slots[6].v)
+  p.bhsr,p.bhsg,p.bhsb=HSV2RGB(slots[6].h,slots[6].s*0.75,math.min(slots[6].v*1.35,1))
+  -- Selection
+  p.slr,p.slg,p.slb=HSV2RGB(slots[7].h,slots[7].s,slots[7].v)
+  -- Route
+  p.rtr,p.rtg,p.rtb=HSV2RGB(slots[8].h,slots[8].s,slots[8].v)
+  p.rtdr,p.rtdg,p.rtdb=HSV2RGB(slots[8].h,slots[8].s*0.6,slots[8].v*0.35)
+  p.rtlr,p.rtlg,p.rtlb=HSV2RGB(slots[8].h,slots[8].s*0.5,math.min(slots[8].v*1.1,1))
+  -- Derived panel/tab/scroll
+  p.phdr,p.phdg,p.phdb=HSV2RGB(slots[1].h,slots[1].s*0.6,slots[1].v*0.12)
+  p.tabr,p.tabg,p.tabb=HSV2RGB(slots[1].h,slots[1].s*0.8,slots[1].v*0.35)
+  p.tbbr,p.tbbg,p.tbbb=HSV2RGB(slots[1].h,slots[1].s*0.6,slots[1].v*0.08)
+  p.sbtr,p.sbtg,p.sbtb=HSV2RGB(slots[1].h,slots[1].s*0.5,slots[1].v*0.3)
+  p.sbhr,p.sbhg,p.sbhb=HSV2RGB(slots[1].h,slots[1].s*0.7,slots[1].v*0.7)
+  p.ftr,p.ftg,p.ftb=HSV2RGB(slots[2].h,slots[2].s*0.7,math.max(slots[2].v*1.5,0.06))
+  -- Disabled button (desaturated, dark)
+  p.bdfr,p.bdfg,p.bdfb=0.06,0.06,0.14
+  p.bdsr,p.bdsg,p.bdsb=0.18,0.18,0.28
+  p.bdtr,p.bdtg,p.bdtb=0.28,0.28,0.38
+  -- Dim text
+  p.dmr,p.dmg,p.dmb=p.txr*0.40,p.txg*0.40,p.txb*0.44
+  p.nmr,p.nmg,p.nmb=p.txr*0.37,p.txg*0.43,p.txb*0.61
+  p.lbr,p.lbg,p.lbb=p.txr*0.51,p.txg*0.51,p.txb*0.76
+  p.tir,p.tig,p.tib=p.txr*0.67,p.txg*0.67,p.txb*0.85
+  return p
+end
+
+function LoadTheme()
+  if not databank then return DefaultShipTheme() end
+  local name=databank.getStringValue("theme_profile_active")
+  if name=="" then
+    -- Migration: check if AccentR/G/B differ from defaults
+    if AccentR~=0 or AccentG~=200 or AccentB~=255 then
+      local r,g,b=AccentR/255,AccentG/255,AccentB/255
+      local h,s,v=RGB2HSV(r,g,b)
+      local slots=DefaultShipTheme()
+      slots[1]={h=h,s=s,v=v}
+      SaveTheme("Migrated",slots)
+      return slots
+    end
+    return DefaultShipTheme()
+  end
+  local raw=databank.getStringValue("theme_p_"..name)
+  if raw=="" then return DefaultShipTheme() end
+  local ok,data=pcall(json.decode,raw)
+  if not ok or not data then return DefaultShipTheme() end
+  if #data<8 then return DefaultShipTheme() end
+  for i=1,8 do
+    if type(data[i])~="table" or not data[i].h then return DefaultShipTheme() end
+  end
+  return data
+end
+
+function SaveTheme(name,slots)
+  if not databank then return end
+  name=name:gsub("[^%w%s_-]",""):sub(1,20)
+  if name=="" then name="Default" end
+  databank.setStringValue("theme_p_"..name,json.encode(slots))
+  databank.setStringValue("theme_profile_active",name)
+  local raw=databank.getStringValue("theme_profile_names") or "[]"
+  local ok,names=pcall(json.decode,raw)
+  if not ok or type(names)~="table" then names={} end
+  local found=false
+  for _,n in ipairs(names) do if n==name then found=true;break end end
+  if not found then table.insert(names,name) end
+  databank.setStringValue("theme_profile_names",json.encode(names))
+end
+
+function DeleteTheme(name)
+  if not databank then return end
+  databank.setStringValue("theme_p_"..name,"")
+  local raw=databank.getStringValue("theme_profile_names") or "[]"
+  local ok,names=pcall(json.decode,raw)
+  if not ok then return end
+  for i,n in ipairs(names) do if n==name then table.remove(names,i);break end end
+  databank.setStringValue("theme_profile_names",json.encode(names))
+  if databank.getStringValue("theme_profile_active")==name then
+    databank.setStringValue("theme_profile_active",names[1] or "")
+  end
+end
+
+function GetThemeProfiles()
+  if not databank then return {} end
+  local raw=databank.getStringValue("theme_profile_names")
+  if not raw or raw=="" then return {} end
+  local ok,names=pcall(json.decode,raw)
+  if not ok or type(names)~="table" then return {} end
+  return names
+end
+
+function GetActiveProfileName()
+  if not databank then return "Default" end
+  local n=databank.getStringValue("theme_profile_active")
+  return n~="" and n or "Default"
+end
+
+function ExportTheme(name,slots)
+  local parts={}
+  for _,s in ipairs(slots) do
+    table.insert(parts,string.format("%.2f,%.2f,%.2f",s.h,s.s,s.v))
+  end
+  return "THEME:"..name..":"..table.concat(parts,"|")
+end
+
+function ImportTheme(str)
+  local prefix,name,body=str:match("^(THEME):(.-):(.*)")
+  if not prefix then return nil,nil end
+  local slots={}
+  for part in body:gmatch("[^|]+") do
+    local h,s,v=part:match("(.+),(.+),(.+)")
+    h,s,v=tonumber(h),tonumber(s),tonumber(v)
+    if not h then return nil,nil end
+    table.insert(slots,{h=h,s=s,v=v})
+  end
+  if #slots~=8 then return nil,nil end
+  return name,slots
+end
+
 function OrgKey(n) return "org_"..n:gsub("[^%w]","_") end
 function AutoName(prefix,list)
   local i=1
@@ -98,6 +292,267 @@ function BuildShipID()
   if cid~="" then return name.."#"..cid:sub(-6) end
   return name
 end
+function BuildPickerScript()
+  local P=Palette
+  local slots=ThemeSlots
+  local elem=PickerElem
+  local cur=slots[elem]
+  local cr,cg,cb=HSV2RGB(cur.h,cur.s,cur.v)
+  local profName=GetActiveProfileName()
+  local profNames=GetThemeProfiles()
+  local swatches={}
+  for i=1,8 do
+    local r,g,b=HSV2RGB(slots[i].h,slots[i].s,slots[i].v)
+    table.insert(swatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
+  end
+  local swLit="{"..table.concat(swatches,",").."}"
+  local savedSlots=nil
+  if databank then
+    local sn=GetActiveProfileName()
+    local sr=databank.getStringValue("theme_p_"..sn)
+    if sr and sr~="" then
+      local ok,sd=pcall(json.decode,sr)
+      if ok and type(sd)=="table" and #sd>=8 then savedSlots=sd end
+    end
+  end
+  if not savedSlots then savedSlots=slots end
+  local savedSwatches={}
+  for i=1,8 do
+    local s=savedSlots[i] or {h=0,s=0,v=0}
+    local r,g,b=HSV2RGB(s.h,s.s,s.v)
+    table.insert(savedSwatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
+  end
+  local savedSwLit="{"..table.concat(savedSwatches,",").."}"
+  local lblLit="{"
+  for i,l in ipairs(THEME_SLOT_LABELS) do
+    if i>1 then lblLit=lblLit.."," end
+    lblLit=lblLit..'"'..l..'"'
+  end
+  lblLit=lblLit.."}"
+  local pnLit="{"
+  for i,n in ipairs(profNames) do
+    if i>1 then pnLit=pnLit.."," end
+    pnLit=pnLit..'"'..n..'"'
+  end
+  pnLit=pnLit.."}"
+  local S={}
+  local h1={}
+  h1[#h1+1]="local json=require('dkjson')\nlocal SW,SH=getResolution()\nlocal cx,cy=getCursor() local pr=getCursorReleased() local Out=\"\"\n"
+  h1[#h1+1]=string.format("local Bgr,Bgg,Bgb=%f,%f,%f\n",P.bgr,P.bgg,P.bgb)
+  h1[#h1+1]=string.format("local Txr,Txg,Txb=%f,%f,%f\n",P.txr,P.txg,P.txb)
+  h1[#h1+1]=string.format("local Hdr,Hdg,Hdb=%f,%f,%f\n",P.hdr,P.hdg,P.hdb)
+  h1[#h1+1]=string.format("local PHr,PHg,PHb=%f,%f,%f\n",P.phdr,P.phdg,P.phdb)
+  h1[#h1+1]=string.format("local Lnr,Lng,Lnb=%f,%f,%f\n",P.lnr,P.lng,P.lnb)
+  h1[#h1+1]=string.format("local BNfr,BNfg,BNfb=%f,%f,%f local BNsr,BNsg,BNsb=%f,%f,%f\n",P.bnfr,P.bnfg,P.bnfb,P.bnsr,P.bnsg,P.bnsb)
+  h1[#h1+1]=string.format("local BHfr,BHfg,BHfb=%f,%f,%f local BHsr,BHsg,BHsb=%f,%f,%f\n",P.bhfr,P.bhfg,P.bhfb,P.bhsr,P.bhsg,P.bhsb)
+  h1[#h1+1]=string.format("local BDfr,BDfg,BDfb=%f,%f,%f local BDsr,BDsg,BDsb=%f,%f,%f local BDtr,BDtg,BDtb=%f,%f,%f\n",P.bdfr,P.bdfg,P.bdfb,P.bdsr,P.bdsg,P.bdsb,P.bdtr,P.bdtg,P.bdtb)
+  h1[#h1+1]=string.format("local FTr,FTg,FTb=%f,%f,%f\n",P.ftr,P.ftg,P.ftb)
+  h1[#h1+1]=string.format("local Ar,Ag,Ab=%f,%f,%f local Nr,Ng,Nb=%f,%f,%f\n",P.ar,P.ag,P.ab,P.nr,P.ng,P.nb)
+  h1[#h1+1]=string.format("local SelElem=%d\n",elem)
+  h1[#h1+1]=string.format("local CurH,CurS,CurV=%f,%f,%f\n",cur.h,cur.s,cur.v)
+  h1[#h1+1]=string.format("local CurR,CurG,CurB=%f,%f,%f\n",cr,cg,cb)
+  h1[#h1+1]="local ProfName=\""..profName.."\"\n"
+  h1[#h1+1]="local LABELS="..lblLit.."\n"
+  h1[#h1+1]="local SWATCHES="..swLit.."\n"
+  h1[#h1+1]="local SAVED_SWATCHES="..savedSwLit.."\n"
+  h1[#h1+1]="local PROFILES="..pnLit.."\n"
+  S[1]=table.concat(h1)
+  S[2]=[[
+local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
+local Lb=createLayer() local Lc=createLayer() local Lt=createLayer()
+local Lh=createLayer() local Lx=createLayer()
+local fT=loadFont("Montserrat-Light",18) local fS=loadFont("Montserrat-Light",13)
+local fH=loadFont("Montserrat-Light",20) local fB=loadFont("Montserrat-Light",22)
+setDefaultFillColor(Lt,Shape_Text,Txr,Txg,Txb,1)
+setDefaultFillColor(Lh,Shape_Text,Ar,Ag,Ab,1)
+setDefaultFillColor(Lx,Shape_Text,Hdr,Hdg,Hdb,1)
+setDefaultStrokeColor(Ll,Shape_Line,Lnr,Lng,Lnb,0.6)
+setDefaultStrokeWidth(Ll,Shape_Line,1)
+setNextFillColor(Lbg,Bgr,Bgg,Bgb,1) addBox(Lbg,0,0,SW,SH)
+local function h2r(h,s,v)
+  h=h%360 local c=v*s local x=c*(1-math.abs((h/60)%2-1)) local m=v-c
+  local r,g,b
+  if     h<60  then r,g,b=c,x,0 elseif h<120 then r,g,b=x,c,0
+  elseif h<180 then r,g,b=0,c,x elseif h<240 then r,g,b=0,x,c
+  elseif h<300 then r,g,b=x,0,c else r,g,b=c,0,x end
+  return r+m,g+m,b+m
+end
+local function Btn(tx,x,y,w,h,en)
+  local hv=(cx>=x and cx<x+w and cy>=y and cy<y+h)
+  if not en then
+    setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7) setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
+    setNextFillColor(Lt,BDtr,BDtg,BDtb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+    addText(Lt,fT,tx,x+w/2,y+h/2) return false
+  elseif hv then
+    setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+  else
+    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+  end
+  return hv and pr
+end
+]]
+  S[3]=[[
+setNextFillColor(Lp,PHr,PHg,PHb,1) setNextStrokeColor(Lp,Lnr,Lng,Lnb,0.8)
+setNextStrokeWidth(Lp,1) addBox(Lp,0,0,SW,32)
+local clX,clW=4,70
+local clHv=(cx>=clX and cx<clX+clW and cy>=4 and cy<28)
+if clHv then setNextFillColor(Lb,0.6,0.15,0.1,0.9) else setNextFillColor(Lb,0.35,0.08,0.05,0.8) end
+setNextStrokeColor(Lb,0.8,0.3,0.2,0.7) setNextStrokeWidth(Lb,1)
+addBoxRounded(Lb,clX,4,clW,24,3)
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,"X CLOSE",clX+clW/2,16)
+if clHv and pr then Out=json.encode({"theme_close"}) end
+setNextTextAlign(Lx,AlignH_Center,AlignV_Middle) addText(Lx,fB,"COLOR THEME SETTINGS",SW/2,16)
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+addText(Lt,fS,"Profile: "..ProfName,SW-8,16)
+addLine(Ll,0,32,SW,32)
+local elX,elW=0,170
+local huX,huW=170,40
+local svX,svW=214,256
+local svH=256
+local vpX=svX+svW+8
+local vpW=SW-vpX
+local bodyY=36 local bodyH=SH-36-36
+]]
+  S[4]=[[
+setNextFillColor(Lp,PHr*0.8,PHg*0.8,PHb*0.8,0.5) addBox(Lp,elX,bodyY,elW,bodyH)
+setNextTextAlign(Lx,AlignH_Center,AlignV_Middle) addText(Lx,fS,"ELEMENTS",elX+elW/2,bodyY+14)
+addLine(Ll,elX,bodyY+28,elX+elW,bodyY+28)
+for i=1,8 do
+  local ey=bodyY+28+(i-1)*30
+  local hv=(cx>=elX and cx<elX+elW and cy>=ey and cy<ey+30)
+  local sel=(i==SelElem)
+  if sel then
+    setNextFillColor(Lp,Ar,Ag,Ab,0.20) setNextStrokeColor(Lp,Ar,Ag,Ab,0.6)
+    setNextStrokeWidth(Lp,1) addBox(Lp,elX+2,ey,elW-4,28)
+  elseif hv then
+    setNextFillColor(Lp,1,1,1,0.06) addBox(Lp,elX+2,ey,elW-4,28)
+  end
+  local sw=SWATCHES[i]
+  setNextFillColor(Lc,sw[1],sw[2],sw[3],1)
+  setNextStrokeColor(Lc,Txr*0.5,Txg*0.5,Txb*0.5,0.5) setNextStrokeWidth(Lc,1)
+  addBoxRounded(Lc,elX+8,ey+5,18,18,3)
+  local L=sel and Lh or Lt
+  if sel then setNextFillColor(Lh,Ar,Ag,Ab,1) end
+  setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,LABELS[i],elX+32,ey+14)
+  if hv and pr then Out=json.encode({"theme_sel_elem",i}) end
+end
+]]
+  S[5]=[[
+local hueY=bodyY+4 local hueH=bodyH-8
+local hStep=hueH/36
+for i=0,35 do
+  local hh=i*10
+  local hr,hg,hb=h2r(hh,1,1)
+  setNextFillColor(Lc,hr,hg,hb,1) addBox(Lc,huX+4,hueY+i*hStep,huW-8,hStep+1)
+  if math.abs(hh-CurH)<5 or (CurH>355 and hh==0) then
+    setNextStrokeColor(Ll,1,1,1,1) setNextStrokeWidth(Ll,2)
+    addBox(Ll,huX+2,hueY+i*hStep,huW-4,hStep)
+  end
+end
+if pr and cx>=huX and cx<huX+huW and cy>=hueY and cy<hueY+hueH then
+  local h=((cy-hueY)/hueH)*360
+  Out=json.encode({"theme_set_hue",h})
+end
+local svY=bodyY+4
+local cellW=svW/16 local cellH=svH/16
+for sy=0,15 do
+  for sx=0,15 do
+    local s=sx/15 local v=1-sy/15
+    local gr,gg,gb=h2r(CurH,s,v)
+    setNextFillColor(Lc,gr,gg,gb,1) addBox(Lc,svX+sx*cellW,svY+sy*cellH,cellW+0.5,cellH+0.5)
+  end
+end
+local chx=svX+CurS*15*cellW+cellW/2
+local chy=svY+(1-CurV)*15*cellH+cellH/2
+setNextStrokeColor(Ll,1,1,1,0.9) setNextStrokeWidth(Ll,1)
+addLine(Ll,chx-8,chy,chx+8,chy) addLine(Ll,chx,chy-8,chx,chy+8)
+setNextStrokeColor(Ll,0,0,0,0.6) setNextStrokeWidth(Ll,1)
+addLine(Ll,chx-7,chy-1,chx+7,chy-1) addLine(Ll,chx-1,chy-7,chx-1,chy+7)
+if pr and cx>=svX and cx<svX+svW and cy>=svY and cy<svY+svH then
+  local ns=(cx-svX)/svW local nv=1-(cy-svY)/svH
+  Out=json.encode({"theme_set_sv",ns,nv})
+end
+]]
+  local vpX = 214 + 256 + 8
+  S[6]=string.format([[
+local valY=bodyY+8
+-- Preview swatch (split: saved | current)
+local pvW=vpW-16 local pvH=60 local pvHalf=math.floor(pvW/2)
+local sw0=SAVED_SWATCHES[SelElem]
+setNextFillColor(Lc,sw0[1],sw0[2],sw0[3],1) addBox(Lc,vpX+8,valY,pvHalf,pvH)
+setNextFillColor(Lc,CurR,CurG,CurB,1) addBox(Lc,vpX+8+pvHalf,valY,pvW-pvHalf,pvH)
+setNextFillColor(Lt,0,0,0,0) setNextStrokeColor(Lt,Txr*0.5,Txg*0.5,Txb*0.5,0.6) setNextStrokeWidth(Lt,1)
+addBoxRounded(Lt,vpX+8,valY,pvW,pvH,6)
+addLine(Ll,vpX+8+pvHalf,valY+4,vpX+8+pvHalf,valY+pvH-4)
+local sv=sw0[1]+sw0[2]+sw0[3]
+local scx=vpX+8+pvHalf/2
+if sv>1.5 then setNextFillColor(Lt,0,0,0,0.75) else setNextFillColor(Lt,1,1,1,0.75) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"SAVED",scx,valY+18)
+if sv>1.5 then setNextFillColor(Lt,0,0,0,0.55) else setNextFillColor(Lt,1,1,1,0.55) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,string.format("#%%02X%%02X%%02X",math.floor(sw0[1]*255+0.5),math.floor(sw0[2]*255+0.5),math.floor(sw0[3]*255+0.5)),scx,valY+38)
+local pv=CurR+CurG+CurB
+local ccx=vpX+8+pvHalf+(pvW-pvHalf)/2
+if pv>1.5 then setNextFillColor(Lt,0,0,0,0.9) else setNextFillColor(Lt,1,1,1,0.9) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,LABELS[SelElem],ccx,valY+18)
+if pv>1.5 then setNextFillColor(Lt,0,0,0,0.6) else setNextFillColor(Lt,1,1,1,0.6) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,string.format("#%%02X%%02X%%02X",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),ccx,valY+38)
+valY=valY+70
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"RGB",vpX+8,valY)
+setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fT,string.format("R: %%d   G: %%d   B: %%d",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),vpX+8,valY+14)
+valY=valY+38
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"HSV",vpX+8,valY)
+setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fT,string.format("H: %%d   S: %%d%%%%   V: %%d%%%%",math.floor(CurH+0.5),math.floor(CurS*100+0.5),math.floor(CurV*100+0.5)),vpX+8,valY+14)
+valY=valY+38
+setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"HEX",vpX+8,valY)
+setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fT,string.format("#%%02X%%02X%%02X",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),vpX+8,valY+14)
+valY=valY+42
+setNextFillColor(Lt,Txr*0.4,Txg*0.4,Txb*0.4,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"Chat: theme ELEMENT #HEX",vpX+8,valY)
+setNextFillColor(Lt,Txr*0.4,Txg*0.4,Txb*0.4,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+addText(Lt,fS,"Chat: theme ELEMENT R G B",vpX+8,valY+14)
+]], vpX, vpX)
+  S[7]=[[
+addLine(Ll,0,SH-36,SW,SH-36)
+setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,SH-36,SW,36)
+local px=8 local py=SH-30 local pH=22 local pG=4
+for i,pn in ipairs(PROFILES) do
+  local tw=math.min(100,math.max(50,#pn*8+16))
+  if px+tw>SW-280 then break end
+  local hv=(cx>=px and cx<px+tw and cy>=py and cy<py+pH)
+  local active=(pn==ProfName)
+  if active then
+    setNextFillColor(Lb,Ar*0.3,Ag*0.3,Ab*0.3,0.9) setNextStrokeColor(Lb,Ar,Ag,Ab,0.9)
+  elseif hv then
+    setNextFillColor(Lb,BHfr,BHfg,BHfb,0.7) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.7)
+  else
+    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.5) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.5)
+  end
+  setNextStrokeWidth(Lb,1) addBoxRounded(Lb,px,py,tw,pH,3)
+  setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,pn,px+tw/2,py+pH/2)
+  if hv and pr then Out=json.encode({"theme_load",pn}) end
+  px=px+tw+pG
+end
+local abX=SW-270
+if Btn("+ New",abX,py,55,pH,true) then Out=json.encode({"theme_new"}) end abX=abX+59
+if Btn("Save",abX,py,50,pH,true) then Out=json.encode({"theme_save"}) end abX=abX+54
+if Btn("Delete",abX,py,55,pH,#PROFILES>1) then Out=json.encode({"theme_delete"}) end abX=abX+59
+if Btn("Reset",abX,py,50,pH,true) then Out=json.encode({"theme_reset"}) end
+setOutput(Out) requestAnimationFrame(5)
+]]
+  return table.concat(S)
+end
+
 function SetStatus(msg,dur)
   system.print("[NAV] "..msg)
   StatusMsg=msg; StatusExpiry=system.getArkTime()+(dur or 5)
@@ -147,6 +602,13 @@ PushQueueIdx = 1
 PushSending  = false
 HudPX        = 13    -- runtime HUD X% (set from databank or HudX export)
 HudPY        = 15    -- runtime HUD Y% (set from databank or HudY export)
+
+-- Theme state
+ThemeSlots       = nil   -- loaded on init
+Palette          = nil   -- derived from ThemeSlots
+PickerElem       = 1     -- 1-8, which slot is being edited
+ShowThemePicker  = false -- true when optional screen shows picker
+PickerProfileScroll = 0
 
 -- ── Databank ──────────────────────────────────────────────────
 function LoadData()
@@ -584,20 +1046,18 @@ function DrawHUD()
     if v.type~="hdr" and v.type~="info" then si=si+1; selIdxMap[i]=si end
   end
 
-  -- ── Accent colors ─────────────────────────────────────────────
-  local ar,ag,ab = AccentR/255, AccentG/255, AccentB/255
-  local mx=math.max(ar,ag,ab,0.001)
-  local nr,ng,nb = ar/mx,ag/mx,ab/mx
+  -- ── Theme-derived CSS colors ────────────────────────────────────
+  local P=Palette
   local function rgba(r,g,b,a) return string.format("rgba(%d,%d,%d,%.2f)",math.floor(r*255),math.floor(g*255),math.floor(b*255),a) end
-  local cA  = string.format("rgb(%d,%d,%d)",math.floor(ar*255),math.floor(ag*255),math.floor(ab*255))
-  local cBg = rgba(nr*0.01,       ng*0.01+0.002,  nb*0.04+0.007,  0.93)
-  local cBd = rgba(nr*0.47,       ng*0.47,         nb*0.47,         0.45)
-  local cPH = rgba(nr*0.20,       ng*0.20,         nb*0.47,         0.60)
-  local cSl = rgba(ar,            ag,              ab,              0.35)
-  local cDv = rgba(nr*0.24,       ng*0.24,         nb*0.55,         0.25)
-  local cNB = rgba(nr*0.12,       ng*0.12,         nb*0.31,         0.60)
-  local cFt = string.format("rgb(%d,%d,%d)",math.floor(nr*55+25),math.floor(ng*55+30),math.floor(nb*55+50))
-  local cRi = string.format("rgb(%d,%d,%d)",math.floor(nr*55+30),math.floor(ng*55+45),math.floor(nb*55+70))
+  local cA  = string.format("rgb(%d,%d,%d)", math.floor(P.ar*255), math.floor(P.ag*255), math.floor(P.ab*255))
+  local cBg = string.format("rgba(%d,%d,%d,0.93)", math.floor(P.bgr*255), math.floor(P.bgg*255), math.floor(P.bgb*255))
+  local cBd = rgba(P.lnr, P.lng, P.lnb, 0.45)
+  local cPH = rgba(P.phdr, P.phdg, P.phdb, 0.60)
+  local cSl = rgba(P.ar, P.ag, P.ab, 0.35)
+  local cDv = rgba(P.lnr*0.6, P.lng*0.6, P.lnb*0.6, 0.25)
+  local cNB = rgba(P.phdr*0.6, P.phdg*0.6, P.phdb*0.6, 0.60)
+  local cFt = string.format("rgb(%d,%d,%d)", math.floor(P.ftr*255), math.floor(P.ftg*255), math.floor(P.ftb*255))
+  local cRi = string.format("rgb(%d,%d,%d)", math.floor(P.txr*0.55*255), math.floor(P.txg*0.55*255), math.floor(P.txb*0.76*255))
   local ls15=math.floor(15*sc)
 
   local h={}
@@ -780,6 +1240,36 @@ function ActivateMenuItem()
   DrawHUD()
 end
 
+-- ── Theme helpers ─────────────────────────────────────────────
+function RefreshTheme()
+  Palette=DeriveTheme(ThemeSlots)
+end
+
+function DrawPickerScreen()
+  if not screen then return end
+  if not ShowThemePicker then
+    if not Palette then Palette=DeriveTheme(ThemeSlots or DefaultShipTheme()) end
+    local P=Palette
+    screen.setRenderScript(string.format([[
+local Lbg=createLayer() local Lt=createLayer()
+local SW,SH=getResolution()
+setNextFillColor(Lbg,%f,%f,%f,1) addBox(Lbg,0,0,SW,SH)
+local fB=loadFont("Montserrat-Light",22) local fS=loadFont("Montserrat-Light",14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fB,"THEME EDITOR",SW/2,SH/2-14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fS,"Alt+0 to open",SW/2,SH/2+14)
+]], P.bgr,P.bgg,P.bgb, P.ar,P.ag,P.ab, P.txr*0.5,P.txg*0.5,P.txb*0.5))
+    return
+  end
+  local ok2,result=pcall(BuildPickerScript)
+  if not ok2 then system.print("[NAV] picker err: "..tostring(result)); return end
+  screen.setRenderScript(result)
+end
+
+-- BuildPickerScript is defined in library.onStart to stay within per-handler local variable limits
+-- (moved there to avoid DU's per-handler CPU/local-variable budget exhaustion)
+
 -- ── Init ──────────────────────────────────────────────────────
 do
   local ok,res=pcall(require,"autoconf/custom/"..CustomAtlas)
@@ -791,13 +1281,21 @@ do
   end
 end
 LoadData()
+ThemeSlots=LoadTheme()
+Palette=DeriveTheme(ThemeSlots)
 UpdateChannels()
 unit.setTimer("nav_tick",5)
 UpdateWaypoint()
+if screen then
+  screen.activate()
+  DrawPickerScreen()
+  unit.setTimer("screen_poll",0.05)
+end
 DrawHUD()
 system.print("=== Navigator "..VERSION.." (No Screen) ===  "..ShipID)
 system.print("Target: "..(NavTarget and NavTarget.n or "none"))
-system.print("Alt+Q/C = scroll  |  Alt+D = select  |  Shift = toggle HUD  |  type: help")
+system.print("Alt+Q/C = scroll  |  Alt+D = select  |  Shift = toggle HUD  |  type: help"..
+  (screen and "  |  Alt+0 = theme picker" or ""))
 
 
 --[[@
@@ -806,6 +1304,20 @@ event=onStop()
 args=
 ]]
 system.showScreen(0)
+if screen then
+  if not Palette then Palette=DeriveTheme(ThemeSlots or DefaultShipTheme()) end
+  local P=Palette
+  screen.setRenderScript(string.format([[
+local Lbg=createLayer() local Lt=createLayer()
+local SW,SH=getResolution()
+setNextFillColor(Lbg,%f,%f,%f,1) addBox(Lbg,0,0,SW,SH)
+local fB=loadFont("Montserrat-Light",22) local fS=loadFont("Montserrat-Light",14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fB,"THEME EDITOR",SW/2,SH/2-14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fS,"Offline — activate PB to start",SW/2,SH/2+14)
+]], P.bgr,P.bgg,P.bgb, P.ar,P.ag,P.ab, P.txr*0.5,P.txg*0.5,P.txb*0.5))
+end
 
 
 --[[@
@@ -816,6 +1328,61 @@ args="nav_tick"
 if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg="" end
 UpdateWaypoint()
 DrawHUD()
+
+
+--[[@
+slot=-1
+event=onTimer(tag)
+args="screen_poll"
+]]
+if not screen then return end
+local raw=screen.getScriptOutput()
+if not raw or raw=="" then return end
+local ok,d=pcall(json.decode,raw)
+if not ok or type(d)~="table" then return end
+local act=d[1]
+if act=="theme_close" then ShowThemePicker=false
+elseif act=="theme_sel_elem" then PickerElem=d[2] or 1
+elseif act=="theme_set_hue" then
+  local h2=d[2] or 0
+  ThemeSlots[PickerElem].h=h2; RefreshTheme()
+elseif act=="theme_set_sv" then
+  local s2,v2=d[2] or 0.5, d[3] or 0.5
+  ThemeSlots[PickerElem].s=math.max(0,math.min(1,s2))
+  ThemeSlots[PickerElem].v=math.max(0,math.min(1,v2))
+  RefreshTheme()
+elseif act=="theme_save" then
+  SaveTheme(GetActiveProfileName(),ThemeSlots)
+  SetStatus("Theme saved: "..GetActiveProfileName())
+elseif act=="theme_load" then
+  local name=d[2] or ""
+  local raw2=databank and databank.getStringValue("theme_p_"..name) or ""
+  if raw2~="" then
+    local ok3,data=pcall(json.decode,raw2)
+    if ok3 and data and #data>=8 then
+      ThemeSlots=data
+      databank.setStringValue("theme_profile_active",name)
+      RefreshTheme()
+      SetStatus("Loaded: "..name)
+    end
+  else SetStatus("Profile not found: "..name) end
+elseif act=="theme_new" then
+  local names=GetThemeProfiles()
+  local newName="Theme "..#names+1
+  SaveTheme(newName,ThemeSlots)
+  SetStatus("Created: "..newName.." (chat: theme rename NAME)")
+elseif act=="theme_delete" then
+  local name=GetActiveProfileName()
+  DeleteTheme(name)
+  ThemeSlots=LoadTheme(); RefreshTheme()
+  SetStatus("Deleted: "..name)
+elseif act=="theme_reset" then
+  ThemeSlots=DefaultShipTheme(); RefreshTheme()
+  SaveTheme(GetActiveProfileName(),ThemeSlots)
+  SetStatus("Theme reset to defaults")
+end
+DrawPickerScreen()
+if not ShowThemePicker then DrawHUD() end
 
 
 --[[@
@@ -849,6 +1416,23 @@ args="lshift"
 ]]
 HUD_VISIBLE=not HUD_VISIBLE
 DrawHUD()
+
+
+--[[@
+slot=-4
+event=onActionStart(action)
+args="option0"
+]]
+if not L_ALT then return end
+if not screen then SetStatus("No screen connected — theme via chat only"); return end
+ShowThemePicker=not ShowThemePicker
+if ShowThemePicker then
+  local sn=GetActiveProfileName()
+  if databank and databank.getStringValue("theme_p_"..sn)==""  then SaveTheme(sn,ThemeSlots) end
+end
+DrawPickerScreen()
+if ShowThemePicker then SetStatus("Theme picker opened on screen")
+else SetStatus("Theme picker closed"); DrawHUD() end
 
 
 --[[@
@@ -1056,7 +1640,18 @@ if lo=="help" then
   system.print("list / routes          list items")
   system.print("status                 show current nav")
   system.print("hudpos X Y              move HUD (e.g. hudpos 13 15)")
-  system.print("Alt+Up/Down = browse  |  Alt+Right = activate")
+  system.print("── Theme ─────────────────────────────")
+  system.print("theme              show all theme colors")
+  system.print("theme accent #HEX  set element by hex")
+  system.print("theme accent R G B set element by RGB 0-255")
+  system.print("theme save [NAME]  save current theme")
+  system.print("theme load NAME    load a saved theme")
+  system.print("theme profiles     list saved profiles")
+  system.print("theme export       export as copyable string")
+  system.print("theme import T:..  import from string")
+  system.print("theme reset        restore defaults")
+  system.print("Alt+Up/Down = browse  |  Alt+Right = activate"..
+    (screen and "  |  Alt+0 = theme picker" or ""))
   return
 end
 
@@ -1184,6 +1779,137 @@ local hpX,hpY=t:match("^[Hh][Uu][Dd][Pp][Oo][Ss]%s+(%d+)%s+(%d+)%s*$")
 if hpX then
   HudPX=math.max(0,math.min(90,tonumber(hpX))); HudPY=math.max(0,math.min(90,tonumber(hpY)))
   SaveData(); SetStatus("HUD position: "..HudPX.."% "..HudPY.."%"); DrawHUD(); return
+end
+
+-- ── Theme commands ────────────────────────────────────────────
+if lo:sub(1,5)=="theme" then
+  local arg=Trim(t:sub(6))
+  local argLo=arg:lower()
+
+  if arg=="" then
+    system.print("═══ THEME COLORS ════════════════════")
+    for i=1,8 do
+      local s=ThemeSlots[i]
+      local r,g,b=HSV2RGB(s.h,s.s,s.v)
+      system.print(string.format("  %-12s H:%3d S:%3d%% V:%3d%%  %s",
+        THEME_SLOT_LABELS[i],math.floor(s.h+0.5),math.floor(s.s*100+0.5),
+        math.floor(s.v*100+0.5),RGB2Hex(r,g,b)))
+    end
+    system.print("  Profile: "..GetActiveProfileName())
+    system.print("  theme ELEMENT #HEX | R G B")
+    system.print("  theme save/load/delete/profiles/export/import/reset/rename")
+    DrawHUD(); return
+  end
+
+  -- theme save NAME
+  local saveName=arg:match("^[Ss][Aa][Vv][Ee]%s+(.+)")
+  if saveName then
+    SaveTheme(Trim(saveName),ThemeSlots); RefreshTheme()
+    SetStatus("Theme saved: "..Trim(saveName)); DrawHUD(); DrawPickerScreen(); return
+  end
+  if argLo=="save" then
+    SaveTheme(GetActiveProfileName(),ThemeSlots)
+    SetStatus("Saved: "..GetActiveProfileName()); DrawHUD(); DrawPickerScreen(); return
+  end
+
+  -- theme load NAME
+  local loadName=arg:match("^[Ll][Oo][Aa][Dd]%s+(.+)")
+  if loadName then
+    loadName=Trim(loadName)
+    local raw2=databank and databank.getStringValue("theme_p_"..loadName) or ""
+    if raw2~="" then
+      local ok3,data=pcall(json.decode,raw2)
+      if ok3 and data and #data>=8 then
+        ThemeSlots=data; databank.setStringValue("theme_profile_active",loadName)
+        RefreshTheme(); SetStatus("Loaded: "..loadName)
+      else SetStatus("Invalid profile data") end
+    else SetStatus("Profile not found: "..loadName) end
+    DrawHUD(); DrawPickerScreen(); return
+  end
+
+  -- theme delete NAME
+  local delName=arg:match("^[Dd][Ee][Ll][Ee][Tt][Ee]%s+(.+)")
+  if delName then
+    DeleteTheme(Trim(delName)); ThemeSlots=LoadTheme(); RefreshTheme()
+    SetStatus("Deleted: "..Trim(delName)); DrawHUD(); DrawPickerScreen(); return
+  end
+
+  -- theme rename NAME
+  local renName=arg:match("^[Rr][Ee][Nn][Aa][Mm][Ee]%s+(.+)")
+  if renName then
+    local oldName=GetActiveProfileName()
+    local newName=Trim(renName)
+    SaveTheme(newName,ThemeSlots)
+    if oldName~=newName then DeleteTheme(oldName) end
+    SetStatus("Renamed to: "..newName); DrawHUD(); DrawPickerScreen(); return
+  end
+
+  -- theme profiles
+  if argLo=="profiles" then
+    local names=GetThemeProfiles()
+    system.print("═══ THEME PROFILES ══════════════════")
+    for i,n in ipairs(names) do
+      local mark=(n==GetActiveProfileName()) and " <" or ""
+      system.print("  "..i..". "..n..mark)
+    end
+    return
+  end
+
+  -- theme export NAME
+  local expName=arg:match("^[Ee][Xx][Pp][Oo][Rr][Tt]%s*(.*)")
+  if expName~=nil then
+    local name=(expName~="" and Trim(expName)) or GetActiveProfileName()
+    local str=ExportTheme(name,ThemeSlots)
+    system.print(str)
+    SetStatus("Exported — copy the line above"); DrawHUD(); return
+  end
+
+  -- theme import THEME:...
+  if arg:sub(1,6)=="THEME:" then
+    local iName,iSlots=ImportTheme(arg)
+    if iName and iSlots then
+      ThemeSlots=iSlots; SaveTheme(iName,iSlots); RefreshTheme()
+      SetStatus("Imported: "..iName)
+    else SetStatus("Invalid import string") end
+    DrawHUD(); DrawPickerScreen(); return
+  end
+
+  -- theme reset
+  if argLo=="reset" then
+    ThemeSlots=DefaultShipTheme(); RefreshTheme()
+    SaveTheme(GetActiveProfileName(),ThemeSlots)
+    SetStatus("Theme reset to defaults"); DrawHUD(); DrawPickerScreen(); return
+  end
+
+  -- theme ELEMENT #HEX  or  theme ELEMENT R G B
+  for i,name in ipairs(THEME_SLOT_NAMES) do
+    if argLo:sub(1,#name)==name:lower() then
+      local rest=Trim(arg:sub(#name+1))
+      local hex=rest:match("^(#%x%x%x%x%x%x)$")
+      if hex then
+        local r,g,b=Hex2RGB(hex)
+        if r then
+          local h2,s2,v2=RGB2HSV(r,g,b)
+          ThemeSlots[i]={h=h2,s=s2,v=v2}; RefreshTheme()
+          SaveTheme(GetActiveProfileName(),ThemeSlots)
+          SetStatus(THEME_SLOT_LABELS[i].." set to "..hex)
+        else SetStatus("Invalid hex code") end
+        DrawHUD(); DrawPickerScreen(); return
+      end
+      local rv,gv,bv=rest:match("^(%d+)%s+(%d+)%s+(%d+)$")
+      if rv then
+        local r,g,b=tonumber(rv)/255,tonumber(gv)/255,tonumber(bv)/255
+        r,g,b=math.min(1,math.max(0,r)),math.min(1,math.max(0,g)),math.min(1,math.max(0,b))
+        local h2,s2,v2=RGB2HSV(r,g,b)
+        ThemeSlots[i]={h=h2,s=s2,v=v2}; RefreshTheme()
+        SaveTheme(GetActiveProfileName(),ThemeSlots)
+        SetStatus(THEME_SLOT_LABELS[i].." set to "..RGB2Hex(r,g,b))
+        DrawHUD(); DrawPickerScreen(); return
+      end
+    end
+  end
+
+  SetStatus("Unknown theme command. Type: theme"); DrawHUD(); return
 end
 
 SetStatus("Unknown: '"..lo.."'  type help")
