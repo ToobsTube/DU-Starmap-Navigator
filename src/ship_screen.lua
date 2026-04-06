@@ -57,16 +57,21 @@ function ParsePos(s)
   w,b,x,y,z=tonumber(w),tonumber(b),tonumber(x),tonumber(y),tonumber(z)
   if b==0 then return {x=x,y=y,z=z} end
   if Atlas then
-    for _,body in pairs(Atlas[0]) do
-      if body.id==b then
-        local deg=math.pi/180
-        local lat,lon,alt=x*deg,y*deg,z
-        local r=body.radius+alt
-        local cx=r*math.cos(lat)*math.cos(lon)
-        local cy=r*math.cos(lat)*math.sin(lon)
-        local cz=r*math.sin(lat)
-        local c=body.center
-        return {x=c[1]+cx,y=c[2]+cy,z=c[3]+cz}
+    local sys=Atlas[0] or Atlas[1]
+    if type(sys)=="table" then
+      for _,body in pairs(sys) do
+        if type(body)=="table" and body.id==b then
+          local c=type(body.center)=="table" and body.center or nil
+          if c and c[1] then
+            local deg=math.pi/180
+            local lat,lon,alt=x*deg,y*deg,z
+            local r=(body.radius or 0)+alt
+            local cx=r*math.cos(lat)*math.cos(lon)
+            local cy=r*math.cos(lat)*math.sin(lon)
+            local cz=r*math.sin(lat)
+            return {x=c[1]+cx,y=c[2]+cy,z=c[3]+cz}
+          end
+        end
       end
     end
   end
@@ -256,9 +261,10 @@ end
 
 function GetThemeProfiles()
   if not databank then return {} end
-  local raw=databank.getStringValue("theme_profile_names") or "[]"
+  local raw=databank.getStringValue("theme_profile_names")
+  if not raw or raw=="" then return {} end
   local ok,names=pcall(json.decode,raw)
-  if not ok then return {} end
+  if not ok or type(names)~="table" then return {} end
   return names
 end
 
@@ -336,6 +342,7 @@ PushSending  = false
 
 -- Theme state
 ShowThemePicker = false
+ShowFirstSync   = false
 ThemeSlots      = nil   -- loaded on init
 Palette         = nil   -- derived from ThemeSlots
 PickerElem      = 1     -- 1-8, which slot is being edited
@@ -693,10 +700,13 @@ end
 
 function DrawScreen()
   if not screen then return end
+  if not Palette then Palette=DeriveTheme(ThemeSlots or DefaultShipTheme()) end
+  local which=ShowThemePicker and "picker" or "screen"
   local builder=ShowThemePicker and BuildPickerScript or BuildScreenScript
   local ok,result=pcall(builder)
-  if not ok then system.print("[NAV] render error: "..tostring(result)); return end
-  screen.setRenderScript(result)
+  if not ok then system.print("[NAV] "..which.." err: "..tostring(result)); return end
+  local ok2,err=pcall(function() screen.setRenderScript(result) end)
+  if not ok2 then system.print("[NAV] setScript err: "..tostring(err)) end
 end
 
 function BuildScreenScript()
@@ -736,12 +746,16 @@ function BuildScreenScript()
   local atlasBodies={}
   if Atlas then
     for _,sys in pairs(Atlas) do
-      for _,body in pairs(sys) do
-        local nm=type(body.name)=="table" and body.name[1] or body.name
-        if type(nm)=="string" and nm~="" and body.center then
-          local c=body.center
-          local pos=string.format("::pos{0,0,%.4f,%.4f,%.4f}",c[1],c[2],c[3])
-          table.insert(atlasBodies,{n=nm,c=pos})
+      if type(sys)=="table" then
+        for _,body in pairs(sys) do
+          if type(body)=="table" then
+            local nm=type(body.name)=="table" and body.name[1] or body.name
+            local c=type(body.center)=="table" and body.center or nil
+            if type(nm)=="string" and nm~="" and c and c[1] and c[2] and c[3] then
+              local pos=string.format("::pos{0,0,%.4f,%.4f,%.4f}",c[1],c[2],c[3])
+              table.insert(atlasBodies,{n=nm,c=pos})
+            end
+          end
         end
       end
     end
@@ -786,12 +800,19 @@ function BuildScreenScript()
 
   local wpLit  = luaList(wps)
   local rtLit  = luaRoute(routes)
-  local ptLit  = luaList(selRoutePts)
+  local ptLit  = luaList(selRoutePts or {})
   local tnLit  = luaStrList(tabNames)
   local atLit  = luaList(atlasBodies)
+  local orgChPairs={}
+  for _,o in ipairs(OrgNames) do
+    local ch=(OrgData[o] and OrgData[o].channel) or ""
+    if ch~="" then table.insert(orgChPairs,string.format("{n=%q,ch=%q}",o,ch)) end
+  end
+  local orgChLit="{"..table.concat(orgChPairs,",").."}"
 
   local S={}
   local P=Palette
+  if not P then error("Palette nil") end
 
   S[1]=string.format([[
 local json=require('dkjson')
@@ -825,6 +846,8 @@ local RT=%s
 local STOPS=%s
 local TABS=%s
 local ATLASBODIES=%s
+local ORG_CHANNELS=%s
+local ShowFirstSync=%s
 ]],
     P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
     P.bgr,P.bgg,P.bgb,
@@ -843,12 +866,13 @@ local ATLASBODIES=%s
     P.dmr,P.dmg,P.dmb, P.nmr,P.nmg,P.nmb, P.lbr,P.lbg,P.lbb, P.tir,P.tig,P.tib,
     ScrollWP,ScrollRT,SelWP,SelRoute,SelStop,
     nName,nDist,nTime,nCoord,nType,nStop,nTotal,
-    StatusMsg,ActiveTab,atlasTabIdx,AtlasSearch,wpLit,rtLit,ptLit,tnLit,atLit)
+    StatusMsg,ActiveTab,atlasTabIdx,AtlasSearch,wpLit,rtLit,ptLit,tnLit,atLit,
+    orgChLit,tostring(ShowFirstSync))
 
   S[2]=[[
 local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
 local Lb=createLayer() local Ls=createLayer() local Lt=createLayer()
-local Lh=createLayer() local Lx=createLayer() local Lst=createLayer()
+local Lh=createLayer() local Lx=createLayer()
 local cx,cy=getCursor() local pr=getCursorReleased() local Out=""
 local fT=loadFont("Montserrat-Light",18) local fS=loadFont("Montserrat-Light",13)
 local fH=loadFont("Montserrat-Light",20) local fB=loadFont("Montserrat-Light",22)
@@ -856,7 +880,6 @@ setDefaultFillColor(Lt,Shape_Text,Txr,Txg,Txb,1)
 setDefaultFillColor(Lh,Shape_Text,Ar,Ag,Ab,1)
 setDefaultFillColor(Ls,Shape_Text,Nr,Ng,Nb,1)
 setDefaultFillColor(Lx,Shape_Text,Hdr,Hdg,Hdb,1)
-setDefaultFillColor(Lst,Shape_Text,Str,Stg,Stb,1)
 setDefaultStrokeColor(Ll,Shape_Line,Lnr,Lng,Lnb,0.6)
 setDefaultStrokeWidth(Ll,Shape_Line,1)
 setNextFillColor(Lbg,Bgr,Bgg,Bgb,1) addBox(Lbg,0,0,SW,SH)
@@ -910,20 +933,22 @@ addLine(Ll,0,C,SW,C)
 -- TAB BAR
 setNextFillColor(Lp,TBr,TBg,TBb,0.95) addBox(Lp,0,TAB_Y,SW,TAB_H)
 local tw=math.min(140,math.floor(SW/#TABS))
+local maxChars=math.max(3,math.floor(tw/7)-1)
 for i,tn in ipairs(TABS) do
   local tx=(i-1)*tw local ty=TAB_Y
+  local lbl=#tn>maxChars and tn:sub(1,maxChars-1)..".." or tn
   local active=(i-1==ActiveTab)
   if active then
     setNextFillColor(Lp,TAr,TAg,TAb,1) setNextStrokeColor(Lp,Ar,Ag,Ab,0.8)
     setNextStrokeWidth(Lp,1) addBox(Lp,tx,ty,tw,TAB_H)
-    setNextTextAlign(Ls,AlignH_Center,AlignV_Middle) addText(Ls,fS,tn,tx+tw/2,ty+TAB_H/2)
+    setNextTextAlign(Ls,AlignH_Center,AlignV_Middle) addText(Ls,fS,lbl,tx+tw/2,ty+TAB_H/2)
   else
     local hv=(cx>=tx and cx<tx+tw and cy>=ty and cy<ty+TAB_H)
     if hv then
       setNextFillColor(Lp,1,1,1,0.06) addBox(Lp,tx,ty,tw,TAB_H)
     end
     setNextFillColor(Lt,TIr,TIg,TIb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-    addText(Lt,fS,tn,tx+tw/2,ty+TAB_H/2)
+    addText(Lt,fS,lbl,tx+tw/2,ty+TAB_H/2)
     if hv and pr then Out=json.encode({"tab",i-1}) end
   end
 end
@@ -1106,7 +1131,7 @@ else
 end
 -- Buttons
 local bX=nvX+5 local bW=nvW-10 local bH=26 local bG=4
-local by=SH-32-(bH+bG)*9
+local by=SH-32-(bH+bG)*9-32
 if Btn("★ MARK WP HERE",         bX,by,bW,bH,true)        then Out=json.encode({"mark_wp"})         end by=by+bH+bG
 if Btn("★ MARK ROUTE STOP",      bX,by,bW,bH,SelRT~="")   then Out=json.encode({"mark_stop"})        end by=by+bH+bG
 if ActiveTab==ATLAS_TAB then
@@ -1147,7 +1172,7 @@ setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"THEME",thX+thW/2
 if thHv and pr then Out=json.encode({"open_theme"}) end
 -- Status / hint text
 if StatusMsg~="" then
-  setNextTextAlign(Lst,AlignH_Center,AlignV_Middle) addText(Lst,fT,StatusMsg,SW/2-40,SH-16)
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,StatusMsg,SW/2-40,SH-16)
 else
   setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
   if SelWP~="" or SelRT~="" then
@@ -1163,21 +1188,43 @@ end
 
 -- ── Color Picker Screen ─────────────────────────────────────
 function BuildPickerScript()
+  if not ThemeSlots then ThemeSlots=DefaultShipTheme() end
+  if not Palette then Palette=DeriveTheme(ThemeSlots) end
   local P=Palette
   local slots=ThemeSlots
-  local elem=PickerElem
-  local cur=slots[elem]
+  local elem=PickerElem or 1
+  local cur=slots[elem] or {h=0,s=0,v=0}
   local cr,cg,cb=HSV2RGB(cur.h,cur.s,cur.v)
   local profName=GetActiveProfileName()
   local profNames=GetThemeProfiles()
 
-  -- Build element color swatches as Lua table literal
+  -- Build element color swatches as Lua table literal (live/unsaved)
   local swatches={}
   for i=1,8 do
-    local r,g,b=HSV2RGB(slots[i].h,slots[i].s,slots[i].v)
+    local s=slots[i] or {h=0,s=0,v=0}
+    local r,g,b=HSV2RGB(s.h,s.s,s.v)
     table.insert(swatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
   end
   local swLit="{"..table.concat(swatches,",").."}"
+
+  -- Build saved swatches from databank (what's actually stored)
+  local savedSlots=nil
+  if databank then
+    local sn=GetActiveProfileName()
+    local sr=databank.getStringValue("theme_p_"..sn)
+    if sr and sr~="" then
+      local ok,sd=pcall(json.decode,sr)
+      if ok and type(sd)=="table" and #sd>=8 then savedSlots=sd end
+    end
+  end
+  if not savedSlots then savedSlots=slots end
+  local savedSwatches={}
+  for i=1,8 do
+    local s=savedSlots[i] or {h=0,s=0,v=0}
+    local r,g,b=HSV2RGB(s.h,s.s,s.v)
+    table.insert(savedSwatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
+  end
+  local savedSwLit="{"..table.concat(savedSwatches,",").."}"
 
   -- Element labels
   local lblLit="{"
@@ -1216,6 +1263,7 @@ local CurR,CurG,CurB=%f,%f,%f
 local ProfName=%q
 local LABELS=%s
 local SWATCHES=%s
+local SAVED_SWATCHES=%s
 local PROFILES=%s
 ]],
     P.bgr,P.bgg,P.bgb, P.txr,P.txg,P.txb, P.hdr,P.hdg,P.hdb,
@@ -1226,7 +1274,7 @@ local PROFILES=%s
     P.ftr,P.ftg,P.ftb,
     P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
     elem, cur.h,cur.s,cur.v, cr,cg,cb,
-    profName, lblLit, swLit, pnLit)
+    profName, lblLit, swLit, savedSwLit, pnLit)
 
   S[2]=[[
 -- Layers & fonts
@@ -1380,14 +1428,32 @@ end
   S[6]=string.format([[
 -- ═══ VALUES & PREVIEW ═══
 local valY=bodyY+8
--- Preview swatch (large)
-setNextFillColor(Lc,CurR,CurG,CurB,1)
-setNextStrokeColor(Lc,Txr*0.5,Txg*0.5,Txb*0.5,0.6) setNextStrokeWidth(Lc,1)
-addBoxRounded(Lc,%d+8,valY,vpW-16,60,6)
-setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-local pv=CurR+CurG+CurB -- brightness check for text visibility
+-- Preview swatch (split: saved | current)
+local pvW=vpW-16 local pvH=60 local pvHalf=math.floor(pvW/2)
+local sw0=SAVED_SWATCHES[SelElem]
+-- Saved color (left half)
+setNextFillColor(Lc,sw0[1],sw0[2],sw0[3],1) addBox(Lc,vpX+8,valY,pvHalf,pvH)
+-- Current color (right half)
+setNextFillColor(Lc,CurR,CurG,CurB,1) addBox(Lc,vpX+8+pvHalf,valY,pvW-pvHalf,pvH)
+-- Rounded border on top layer (transparent fill so colors show through)
+setNextFillColor(Lt,0,0,0,0) setNextStrokeColor(Lt,Txr*0.5,Txg*0.5,Txb*0.5,0.6) setNextStrokeWidth(Lt,1)
+addBoxRounded(Lt,vpX+8,valY,pvW,pvH,6)
+-- Divider line
+addLine(Ll,vpX+8+pvHalf,valY+4,vpX+8+pvHalf,valY+pvH-4)
+-- Saved side labels
+local sv=sw0[1]+sw0[2]+sw0[3]
+local scx=vpX+8+pvHalf/2
+if sv>1.5 then setNextFillColor(Lt,0,0,0,0.75) else setNextFillColor(Lt,1,1,1,0.75) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"SAVED",scx,valY+18)
+if sv>1.5 then setNextFillColor(Lt,0,0,0,0.55) else setNextFillColor(Lt,1,1,1,0.55) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,string.format("#%%02X%%02X%%02X",math.floor(sw0[1]*255+0.5),math.floor(sw0[2]*255+0.5),math.floor(sw0[3]*255+0.5)),scx,valY+38)
+-- Current side labels
+local pv=CurR+CurG+CurB
+local ccx=vpX+8+pvHalf+(pvW-pvHalf)/2
 if pv>1.5 then setNextFillColor(Lt,0,0,0,0.9) else setNextFillColor(Lt,1,1,1,0.9) end
-addText(Lt,fH,LABELS[SelElem],%d+vpW/2,valY+30)
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,LABELS[SelElem],ccx,valY+18)
+if pv>1.5 then setNextFillColor(Lt,0,0,0,0.6) else setNextFillColor(Lt,1,1,1,0.6) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,string.format("#%%02X%%02X%%02X",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),ccx,valY+38)
 valY=valY+70
 -- RGB values
 setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
@@ -1562,7 +1628,10 @@ elseif act=="push"      then
   end
 elseif act=="firstsync_hint" then SetStatus("Type: firstsync CHANNEL  (channel shown on org sync PB screen)",10)
 -- Theme picker actions
-elseif act=="open_theme"  then ShowThemePicker=true
+elseif act=="open_theme"  then
+  ShowThemePicker=true
+  local sn=GetActiveProfileName()
+  if databank and databank.getStringValue("theme_p_"..sn)==""  then SaveTheme(sn,ThemeSlots) end
 elseif act=="theme_close" then ShowThemePicker=false
 elseif act=="theme_sel_elem" then PickerElem=d[2] or 1
 elseif act=="theme_set_hue" then
@@ -1888,7 +1957,16 @@ if lo=="next" then NextStop(); DrawScreen(); return end
 if lo=="prev" then PrevStop(); DrawScreen(); return end
 
 local fsCh=t:match("^[Ff][Ii][Rr][Ss][Tt][Ss][Yy][Nn][Cc]%s+(.+)")
-if fsCh then RequestSync(Trim(fsCh)); DrawScreen(); return end
+if fsCh then
+  fsCh=Trim(fsCh)
+  -- match against known org channels case-insensitively so "navorg" finds "NavOrg"
+  local resolved=fsCh
+  for _,org in ipairs(OrgNames) do
+    local ch=(OrgData[org] and OrgData[org].channel) or ""
+    if ch:lower()==fsCh:lower() then resolved=ch; break end
+  end
+  RequestSync(resolved); DrawScreen(); return
+end
 if lo=="firstsync" then SetStatus("Usage: firstsync CHANNEL  (channel shown on org sync PB screen)",8); DrawScreen(); return end
 if lo=="sync"    then RequestSync(BaseChannel);                                DrawScreen(); return end
 if lo=="orgsync" then

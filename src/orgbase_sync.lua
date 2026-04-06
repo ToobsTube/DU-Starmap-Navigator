@@ -312,7 +312,20 @@ event=onStop()
 args=
 ]]
 system.print("[ORG-SYNC] Stopped. Served: "..tostring(RequestCount))
-if screen then screen.setCenteredText("Org Sync") end
+if screen then
+  if not Palette then Palette=DeriveTheme(ThemeSlots or DefaultOrgTheme()) end
+  local P=Palette
+  screen.setRenderScript(string.format([[
+local Lbg=createLayer() local Lt=createLayer()
+local SW,SH=getResolution()
+setNextFillColor(Lbg,%f,%f,%f,1) addBox(Lbg,0,0,SW,SH)
+local fB=loadFont("Montserrat-Light",22) local fS=loadFont("Montserrat-Light",14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fB,"ORG SYNC",SW/2,SH/2-14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fS,"Offline — activate PB to start",SW/2,SH/2+14)
+]], P.bgr,P.bgg,P.bgb, P.ar,P.ag,P.ab, P.txr*0.5,P.txg*0.5,P.txb*0.5))
+end
 
 
 --[[@

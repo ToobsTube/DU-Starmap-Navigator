@@ -145,6 +145,15 @@ const TOOLS = {
       '-4': 'system',  '-5': 'library',
     }
   },
+  wipe_databanks: {
+    src: 'tools/wipe_databanks.lua',
+    output: 'tools/Wipe_Databanks.txt',
+    slots: {
+      '1': 'databank1', '2': 'databank2',
+      '-1': 'unit', '-2': 'construct', '-3': 'player',
+      '-4': 'system', '-5': 'library',
+    }
+  },
 };
 
 console.log('=== DU Navigator Build ===');

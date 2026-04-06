@@ -20,6 +20,7 @@
 slot=-5
 event=onStart()
 args=
+]]
 -- ── Screen render script builder ──────────────────────────────
 -- Theme state
 ShowThemePicker = false
@@ -103,7 +104,7 @@ local C=32
 -- Layers
 local Lbg=createLayer() local Lp=createLayer()  local Ll=createLayer()
 local Lb=createLayer()  local Ls=createLayer()  local Lt=createLayer()
-local Lh=createLayer()  local Lx=createLayer()  local Lst=createLayer()
+local Lh=createLayer()  local Lx=createLayer()
 
 local fT=loadFont("Montserrat-Light",math.floor(SH*0.031))
 local fS=loadFont("Montserrat-Light",math.floor(SH*0.022))
@@ -114,7 +115,6 @@ setDefaultFillColor(Lt, Shape_Text,Txr,Txg,Txb,1)
 setDefaultFillColor(Lh, Shape_Text,Ar,Ag,Ab,1)
 setDefaultFillColor(Ls, Shape_Text,Nr,Ng,Nb,1)
 setDefaultFillColor(Lx, Shape_Text,Hdr,Hdg,Hdb,1)
-setDefaultFillColor(Lst,Shape_Text,Str,Stg,Stb,1)
 setDefaultStrokeColor(Ll,Shape_Line,Lnr,Lng,Lnb,0.6)
 setDefaultStrokeWidth(Ll,Shape_Line,1)
 
@@ -191,8 +191,8 @@ local vis=math.floor((SH-CON_Y-32)/C)-1
 setNextFillColor(Lp,PHr,PHg,PHb,1) setNextStrokeColor(Lp,Lnr,Lng,Lnb,0.8)
 setNextStrokeWidth(Lp,1) addBox(Lp,0,tabH,SW,C)
 if Sending then
-  setNextFillColor(Lst,Str,Stg,Stb,1) setNextTextAlign(Lst,AlignH_Right,AlignV_Middle)
-  addText(Lst,fT,"⟳ SYNCING...",SW-8,tabH+C/2)
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+  addText(Lt,fT,"⟳ SYNCING...",SW-8,tabH+C/2)
 else
   setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
   addText(Lt,fT,#WP.." WPs  |  "..#RT.." Routes",SW-8,tabH+C/2)
@@ -338,7 +338,7 @@ setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"THEME",thX+thW/2
 if thHv and pr then setAct(json.encode({"open_theme"})) end
 -- Status / hint text
 if Status~="" then
-  setNextTextAlign(Lst,AlignH_Center,AlignV_Middle) addText(Lst,fT,Status,SW/2-40,SH-16)
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,Status,SW/2-40,SH-16)
 else
   setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
   addText(Lt,fS,"Click to select  |  chat: add / del / rename / setpos / newroute / addstop / delstop / help",SW/2-40,SH-16)
@@ -368,6 +368,23 @@ function BuildPickerScript()
     table.insert(swatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
   end
   local swLit="{"..table.concat(swatches,",").."}"
+  local savedSlots=nil
+  if databank then
+    local sn=GetActiveProfileName()
+    local sr=databank.getStringValue("theme_p_"..sn)
+    if sr and sr~="" then
+      local ok,sd=pcall(json.decode,sr)
+      if ok and type(sd)=="table" and #sd>=8 then savedSlots=sd end
+    end
+  end
+  if not savedSlots then savedSlots=slots end
+  local savedSwatches={}
+  for i=1,8 do
+    local s=savedSlots[i] or {h=0,s=0,v=0}
+    local r,g,b=HSV2RGB(s.h,s.s,s.v)
+    table.insert(savedSwatches,string.format("{%.3f,%.3f,%.3f}",r,g,b))
+  end
+  local savedSwLit="{"..table.concat(savedSwatches,",").."}"
 
   -- Element labels
   local lblLit="{"
@@ -406,6 +423,7 @@ local CurR,CurG,CurB=%f,%f,%f
 local ProfName=%q
 local LABELS=%s
 local SWATCHES=%s
+local SAVED_SWATCHES=%s
 local PROFILES=%s
 ]],
     P.bgr,P.bgg,P.bgb, P.txr,P.txg,P.txb, P.hdr,P.hdg,P.hdb,
@@ -416,7 +434,7 @@ local PROFILES=%s
     P.ftr,P.ftg,P.ftb,
     P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
     elem, cur.h,cur.s,cur.v, cr,cg,cb,
-    profName, lblLit, swLit, pnLit)
+    profName, lblLit, swLit, savedSwLit, pnLit)
 
   S[2]=[[
 -- Layers & fonts
@@ -572,14 +590,26 @@ end
   S[6]=string.format([[
 -- VALUES & PREVIEW
 local valY=bodyY+8
--- Preview swatch (large)
-setNextFillColor(Lc,CurR,CurG,CurB,1)
-setNextStrokeColor(Lc,Txr*0.5,Txg*0.5,Txb*0.5,0.6) setNextStrokeWidth(Lc,1)
-addBoxRounded(Lc,%d+8,valY,vpW-16,60,6)
-setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-local pv=CurR+CurG+CurB -- brightness check for text visibility
+-- Preview swatch (split: saved | current)
+local pvW=vpW-16 local pvH=60 local pvHalf=math.floor(pvW/2)
+local sw0=SAVED_SWATCHES[SelElem]
+setNextFillColor(Lc,sw0[1],sw0[2],sw0[3],1) addBox(Lc,vpX+8,valY,pvHalf,pvH)
+setNextFillColor(Lc,CurR,CurG,CurB,1) addBox(Lc,vpX+8+pvHalf,valY,pvW-pvHalf,pvH)
+setNextFillColor(Lt,0,0,0,0) setNextStrokeColor(Lt,Txr*0.5,Txg*0.5,Txb*0.5,0.6) setNextStrokeWidth(Lt,1)
+addBoxRounded(Lt,vpX+8,valY,pvW,pvH,6)
+addLine(Ll,vpX+8+pvHalf,valY+4,vpX+8+pvHalf,valY+pvH-4)
+local sv=sw0[1]+sw0[2]+sw0[3]
+local scx=vpX+8+pvHalf/2
+if sv>1.5 then setNextFillColor(Lt,0,0,0,0.75) else setNextFillColor(Lt,1,1,1,0.75) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"SAVED",scx,valY+18)
+if sv>1.5 then setNextFillColor(Lt,0,0,0,0.55) else setNextFillColor(Lt,1,1,1,0.55) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,string.format("#%%02X%%02X%%02X",math.floor(sw0[1]*255+0.5),math.floor(sw0[2]*255+0.5),math.floor(sw0[3]*255+0.5)),scx,valY+38)
+local pv=CurR+CurG+CurB
+local ccx=vpX+8+pvHalf+(pvW-pvHalf)/2
 if pv>1.5 then setNextFillColor(Lt,0,0,0,0.9) else setNextFillColor(Lt,1,1,1,0.9) end
-addText(Lt,fH,LABELS[SelElem],%d+vpW/2,valY+30)
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,LABELS[SelElem],ccx,valY+18)
+if pv>1.5 then setNextFillColor(Lt,0,0,0,0.6) else setNextFillColor(Lt,1,1,1,0.6) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,string.format("#%%02X%%02X%%02X",math.floor(CurR*255+0.5),math.floor(CurG*255+0.5),math.floor(CurB*255+0.5)),ccx,valY+38)
 valY=valY+70
 -- RGB values
 setNextFillColor(Lt,Txr*0.6,Txg*0.6,Txb*0.6,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
@@ -792,9 +822,10 @@ end
 function DeleteTheme(name)
   if not databank then return end
   databank.setStringValue("theme_p_"..name,"")
-  local raw=databank.getStringValue("theme_profile_names") or "[]"
+  local raw=databank.getStringValue("theme_profile_names")
+  if not raw or raw=="" then return end
   local ok,names=pcall(json.decode,raw)
-  if not ok then return end
+  if not ok or type(names)~="table" then return end
   for i,n in ipairs(names) do if n==name then table.remove(names,i);break end end
   databank.setStringValue("theme_profile_names",json.encode(names))
   if databank.getStringValue("theme_profile_active")==name then
@@ -804,9 +835,10 @@ end
 
 function GetThemeProfiles()
   if not databank then return {} end
-  local raw=databank.getStringValue("theme_profile_names") or "[]"
+  local raw=databank.getStringValue("theme_profile_names")
+  if not raw or raw=="" then return {} end
   local ok,names=pcall(json.decode,raw)
-  if not ok then return {} end
+  if not ok or type(names)~="table" then return {} end
   return names
 end
 
@@ -1145,7 +1177,20 @@ slot=-1
 event=onStop()
 args=
 ]]
-if screen then screen.setCenteredText("Nav Base") end
+if screen then
+  if not Palette then Palette=DeriveTheme(ThemeSlots or DefaultBaseTheme()) end
+  local P=Palette
+  screen.setRenderScript(string.format([[
+local Lbg=createLayer() local Lt=createLayer()
+local SW,SH=getResolution()
+setNextFillColor(Lbg,%f,%f,%f,1) addBox(Lbg,0,0,SW,SH)
+local fB=loadFont("Montserrat-Light",22) local fS=loadFont("Montserrat-Light",14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fB,"NAV BASE",SW/2,SH/2-14)
+setNextFillColor(Lt,%f,%f,%f,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+addText(Lt,fS,"Offline — activate PB to start",SW/2,SH/2+14)
+]], P.bgr,P.bgg,P.bgb, P.ar,P.ag,P.ab, P.txr*0.5,P.txg*0.5,P.txb*0.5))
+end
 
 
 --[[@
@@ -1339,7 +1384,10 @@ elseif cmd=="hint_newroute" then SetStatus("Chat: newroute NAME",8)
 elseif cmd=="hint_addstop"  then SetStatus("Chat: addstop WPname  or  addstop ::pos{...}",8)
 
 -- Theme picker actions from main screen
-elseif cmd=="open_theme"    then ShowThemePicker=true
+elseif cmd=="open_theme"    then
+  ShowThemePicker=true
+  local sn=GetActiveProfileName()
+  if databank and databank.getStringValue("theme_p_"..sn)==""  then SaveTheme(sn,ThemeSlots) end
 end
 PushState()
 
