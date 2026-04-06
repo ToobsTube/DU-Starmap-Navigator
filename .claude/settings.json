@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs=require\\('fs'\\); const d=JSON.parse\\(fs.readFileSync\\('dist/Navigator_Base_v2.0.txt','utf8'\\)\\); const h=d.handlers.find\\(h=>h.filter.slotKey==='-5'\\); const lines=h.code.split\\('\\\\n'\\); console.log\\('Total lines:', lines.length\\); lines.slice\\(498,512\\).forEach\\(\\(l,i\\)=>console.log\\(499+i+':', l\\)\\);\")",
+      "Bash(node -e ':*)",
+      "Read(//c/Users/carl_/OneDrive/Documents/Dual Scripts/ArchHUD/TTV Arch hud 2.105/**)",
+      "Read(//c/Users/carl_/OneDrive/Documents/**)",
+      "Read(//c/Users/carl_/**)"
+    ]
+  }
+}

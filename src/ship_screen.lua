@@ -553,8 +553,15 @@ function ClearWaypoint()
   NavTarget=nil; system.setWaypoint(""); SaveData()
 end
 
-function SendAutopilot(coords)
-  if AutopilotCmd~="" and coords and coords~="" then
+function SendAutopilot(name, coords)
+  if not coords or coords=="" then return end
+  -- Arch HUD databank integration: write destination for userclass to pick up
+  if databank then
+    local label = name or "Navigator"
+    databank.setStringValue("nav_arch_dest", label.."|"..coords)
+  end
+  -- Legacy AutopilotCmd (chat command fallback)
+  if AutopilotCmd~="" then
     system.print(AutopilotCmd.." "..coords)
   end
 end
@@ -565,7 +572,7 @@ function SetNavWP(name,tab)
     if wp.n:lower()==name:lower() then
       NavTarget={t="wp",n=wp.n,c=wp.c,tab=tab}
       SaveData(); UpdateWaypoint()
-      SendAutopilot(wp.c)
+      SendAutopilot(wp.n, wp.c)
       if AutopilotCmd=="" then SetStatus("Navigating: "..wp.n) end
       return true
     end
@@ -581,8 +588,9 @@ function SetNavRoute(name,tab,startStop)
       local idx=startStop or 1
       NavTarget={t="route",n=r.n,c=r.pts[idx].c,tab=tab,stopIdx=idx,stopTotal=#r.pts}
       SaveData(); UpdateWaypoint()
-      SendAutopilot(r.pts[idx].c)
-      if AutopilotCmd=="" then SetStatus("Route: "..r.n.."  stop "..idx.."/"..#r.pts) end
+      local stopLabel=r.n.." stop "..idx.."/"..#r.pts
+      SendAutopilot(stopLabel, r.pts[idx].c)
+      if AutopilotCmd=="" then SetStatus("Route: "..stopLabel) end
       return true
     end
   end
@@ -598,6 +606,8 @@ function NextStop()
       if idx>#r.pts then SetStatus("Already at last stop ("..r.n..")") return end
       NavTarget.stopIdx=idx; NavTarget.c=r.pts[idx].c; NavTarget.stopTotal=#r.pts
       SaveData(); UpdateWaypoint()
+      local stopLabel=r.n.." stop "..idx.."/"..#r.pts
+      SendAutopilot(stopLabel, r.pts[idx].c)
       SetStatus("Stop "..idx.."/"..#r.pts.."  "..(r.pts[idx].label or r.pts[idx].c:sub(1,30))); return
     end
   end
@@ -612,6 +622,8 @@ function PrevStop()
       if idx<1 then SetStatus("Already at first stop") return end
       NavTarget.stopIdx=idx; NavTarget.c=r.pts[idx].c; NavTarget.stopTotal=#r.pts
       SaveData(); UpdateWaypoint()
+      local stopLabel=r.n.." stop "..idx.."/"..#r.pts
+      SendAutopilot(stopLabel, r.pts[idx].c)
       SetStatus("Stop "..idx.."/"..#r.pts.."  "..(r.pts[idx].label or r.pts[idx].c:sub(1,30))); return
     end
   end
