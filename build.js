@@ -42,7 +42,6 @@ const CONFIGS = {
     output: 'Navigator_OrgBase_Admin_v2.0.txt',
     slots: {
        '0': 'screen',   '1': 'databank',
-       '2': 'receiver', '3': 'emitter',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }

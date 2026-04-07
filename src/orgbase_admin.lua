@@ -5,8 +5,6 @@
 -- SLOT CONNECTIONS (connect in this order):
 --   Slot 0: screen     (Screen Unit)
 --   Slot 1: databank   (SHARED databank — same one orgbase_sync uses)
---   Slot 2: receiver   (Receiver)
---   Slot 3: emitter    (Emitter)
 --
 -- RDMS: restrict "use element" to admins only.
 -- This PB is the ONLY one that writes to the shared databank.
@@ -1071,8 +1069,7 @@ LoadData()
 SaveData()  -- persist --export values to databank immediately
 ThemeSlots=LoadTheme()
 Palette=DeriveTheme(ThemeSlots)
-if screen   then screen.activate() end
-if receiver then receiver.setChannelList({OrgChannel}) end
+if screen then screen.activate() end
 system.print("=== Org Admin "..VERSION.." ===  "..OrgName.."  ch:"..OrgChannel)
 system.print("WPs:"..#WaypointList.."  Routes:"..#RouteList)
 unit.setTimer("screen_poll",0.05)
@@ -1358,7 +1355,6 @@ if soN then OrgName=Trim(soN); SaveData(); SetStatus("Org name: "..OrgName); Dra
 local scC=t:match("^[Ss][Ee][Tt][Cc][Hh]%s+(.+)")
 if scC then
   OrgChannel=Trim(scC); SaveData()
-  if receiver then receiver.setChannelList({OrgChannel}) end
   SetStatus("Channel: "..OrgChannel); DrawScreen(); return
 end
 

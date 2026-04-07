@@ -41,7 +41,7 @@ Most players will use one ship PB and Navigator_Base. If you are part of an org,
 
 ### Org Base (if running an org)
 You need TWO programming boards at the base:
-- **Admin PB**: Screen + Databank + Receiver + Emitter
+- **Admin PB**: Screen + Databank
 - **Sync PB**: Screen + Databank (shared with Admin) + Receiver + Emitter
 
 ---
@@ -79,8 +79,6 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 |------|---------|
 | 0 | Screen Unit |
 | 1 | Databank (same databank as Sync PB) |
-| 2 | Receiver |
-| 3 | Emitter |
 
 ### Navigator_OrgBase_Sync
 | Slot | Element |
