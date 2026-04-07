@@ -17,12 +17,20 @@
 
     SETUP:
     1.  Copy this file to:  Game Install\autoconf\custom\archhud\userclass.lua
-    2.  In the Navigator PB export parameters, set AutopilotCmd to /
-        (a single forward slash) if you want the ::pos also sent to Lua chat,
-        or leave it blank to use only the databank method.
-    3.  Make sure your Navigator PB and your control seat (Arch HUD) are both
+    2.  Make sure your Navigator PB and your control seat (Arch HUD) are both
         linked to the same databank.
-    4.  That's it — no other changes needed on either side.
+    3.  That's it — no other changes needed on either side.
+
+    IF YOU ALREADY HAVE A userclass.lua:
+    Do NOT replace your existing file — add the Navigator code to it instead.
+
+    1.  Copy the local _navDb variable and the findDb logic into your file.
+    2.  Inside your existing ExtraOnStart, add the line:
+            _navDb = findDb()
+    3.  Inside your existing ExtraOnUpdate, add the nav polling block
+        from this file (everything after "if _navDb == nil then return end").
+    4.  Your ExtraOnStop and ExtraOnFlush stubs can stay as-is if you
+        already have them defined.
 --]]
 
 userBase  = userBase  or {}
