@@ -15,7 +15,8 @@ A waypoint and route navigation system for **Dual Universe** built on Programmin
 - **Travel Time Calculator** — Uses real burn physics (asymmetric accel/brake profile). Set thrust and brake force in kN from your ship stats — mass is read automatically so estimates stay accurate as cargo changes.
 - **Theme Editor** — Built-in color picker on every PB. Eight color slots control the full UI palette. Themes are saved to the databank and survive restarts.
 - **Atlas** — All planets, moons, and space stations built in. Navigate to any body directly from the UI.
-- **Autopilot Integration** — *(Work in progress)* Command prefix support for Saga and Arch HUDs.
+- **Arch HUD Integration** — Sends waypoints directly to Arch HUD as temporary nav targets via a shared databank. No extra hardware needed.
+- **Saga HUD Integration** — *(Work in progress)* Command prefix support for Saga HUD.
 
 ---
 
