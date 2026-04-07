@@ -558,6 +558,7 @@ function SendAutopilot(name, coords)
   -- Arch HUD databank integration: write to Arch's databank (slot 4, optional)
   if archbank then
     archbank.setStringValue("nav_arch_dest", (name or "Navigator").."|"..coords)
+    system.print("[NAV] wrote to archbank: "..(name or "Navigator"))
   end
   -- Legacy AutopilotCmd (chat command fallback)
   if AutopilotCmd~="" then
@@ -1549,6 +1550,7 @@ Palette=DeriveTheme(ThemeSlots)
 CurrentPos=GetCurrentPos()
 if screen then screen.activate() end
 UpdateChannels()
+if archbank then system.print("[NAV] archbank=OK") end
 unit.setTimer("nav_tick",1)
 unit.setTimer("screen_poll",0.05)
 UpdateWaypoint()

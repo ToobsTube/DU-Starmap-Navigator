@@ -112,8 +112,8 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 #### No Screen version only
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `HudX` | `13` | HUD left position as a percentage from the screen edge. |
-| `HudY` | `15` | HUD top position as a percentage from the screen edge. |
+| `HudX` | `13` | HUD left position as a percentage from the screen edge. This always takes effect — change it here to move the HUD without needing to sit in the seat. |
+| `HudY` | `15` | HUD top position as a percentage from the screen edge. Same as above. |
 
 ### Navigator_Base
 
@@ -255,6 +255,7 @@ The HUD appears as an AR overlay. Press **Left Shift** to show or hide it.
 | `push` | Push to personal base |
 | `orgpush` | Push to the active org |
 | `org NAME` | Switch active org context |
+| `hudpos X Y` | Move the HUD while seated (e.g. `hudpos 5 5`). Same as changing `HudX`/`HudY` but takes effect immediately without reimporting. |
 | `search NAME` | Filter atlas by name |
 | `status` | Show current nav target and distance |
 | `list` | List all waypoints |

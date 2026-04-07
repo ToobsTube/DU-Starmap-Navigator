@@ -631,9 +631,11 @@ function LoadData()
   end
   NavTarget=jd("nav_target")
   ShipID=BuildShipID()
+  -- Export params always win for position; databank only used if export is at default
   local hx=tonumber(databank.getStringValue("hud_x"))
   local hy=tonumber(databank.getStringValue("hud_y"))
-  HudPX=hx or HudX; HudPY=hy or HudY
+  HudPX=(HudX~=13) and HudX or (hx or HudX)
+  HudPY=(HudY~=15) and HudY or (hy or HudY)
 end
 
 function SaveData()
@@ -763,6 +765,7 @@ function SendAutopilot(name, coords)
   -- Arch HUD databank integration: write to Arch's databank (slot 4, optional)
   if archbank then
     archbank.setStringValue("nav_arch_dest", (name or "Navigator").."|"..coords)
+    system.print("[NAV] wrote to archbank: "..(name or "Navigator"))
   end
   -- Legacy AutopilotCmd (chat command fallback)
   if AutopilotCmd~="" then
@@ -1313,6 +1316,7 @@ LoadData()
 ThemeSlots=LoadTheme()
 Palette=DeriveTheme(ThemeSlots)
 UpdateChannels()
+if archbank then system.print("[NAV] archbank=OK") end
 unit.setTimer("nav_tick",5)
 UpdateWaypoint()
 if screen then
@@ -1809,6 +1813,7 @@ if hpX then
   HudPX=math.max(0,math.min(90,tonumber(hpX))); HudPY=math.max(0,math.min(90,tonumber(hpY)))
   SaveData(); SetStatus("HUD position: "..HudPX.."% "..HudPY.."%"); DrawHUD(); return
 end
+if lo=="hudpos" then SetStatus("HUD position: "..HudPX.."% "..HudPY.."%"); return end
 
 -- ── Theme commands ────────────────────────────────────────────
 if lo:sub(1,5)=="theme" then
