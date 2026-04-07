@@ -573,7 +573,6 @@ args=
 local VERSION="v2.0.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
-AutopilotCmd=""        --export: Autopilot command prefix e.g. /goto or / (blank = disabled)
 CalcSpeed   =30000    --export: Time Calc max speed in space in km/h (e.g. 30000)
 CalcThrust  =0        --export: Time Calc total thrust in kN from ship stats (0 = use CalcAccel fallback)
 CalcBrake   =0        --export: Time Calc total brake force in kN from ship stats (0 = auto-detect, fallback to thrust)
@@ -767,10 +766,6 @@ function SendAutopilot(name, coords)
     archbank.setStringValue("nav_arch_dest", (name or "Navigator").."|"..coords)
     system.print("[NAV] wrote to archbank: "..(name or "Navigator"))
   end
-  -- Legacy AutopilotCmd (chat command fallback)
-  if AutopilotCmd~="" then
-    system.print(AutopilotCmd.." "..coords)
-  end
 end
 
 function SetNavWP(name)
@@ -779,7 +774,7 @@ function SetNavWP(name)
       NavTarget={t="wp",n=wp.n,c=wp.c,tab=ContextTabIdx()}
       SaveData(); UpdateWaypoint()
       SendAutopilot(wp.n, wp.c)
-      if AutopilotCmd=="" then SetStatus("Navigating: "..wp.n) end
+      SetStatus("Navigating: "..wp.n)
       return true
     end
   end
@@ -795,7 +790,7 @@ function SetNavRoute(name,startStop)
       SaveData(); UpdateWaypoint()
       local stopLabel=r.n.." stop "..idx.."/"..#r.pts
       SendAutopilot(stopLabel, r.pts[idx].c)
-      if AutopilotCmd=="" then SetStatus("Route: "..stopLabel) end
+      SetStatus("Route: "..stopLabel)
       return true
     end
   end
@@ -1155,11 +1150,6 @@ function DrawHUD()
     h[#h+1]=string.format('<div class="nav">&#9658; %s: %s%s &nbsp; %s</div>', lbl, NavTarget.n:sub(1,20), si2, dist)
   else
     h[#h+1]='<div class="nav" style="color:rgb(65,85,115);">&#9658; No target</div>'
-  end
-  -- AP hint
-  if AutopilotCmd~="" and NavTarget and NavTarget.c then
-    h[#h+1]=string.format('<div class="nav" style="color:rgb(255,200,50);font-size:%dpx;">%s</div>',
-      fsS, (AutopilotCmd.." "..NavTarget.c):sub(1,40))
   end
   local secLabel=SECTIONS[SectionIdx]
   if secLabel=="ATLAS" and AtlasSearch~="" then secLabel="ATLAS  /"..AtlasSearch end

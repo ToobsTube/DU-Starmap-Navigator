@@ -24,6 +24,7 @@ Most players will use one ship PB and Navigator_Base. If you are part of an org,
 - 1x Databank
 - 1x Receiver
 - 1x Emitter
+- 1x Databank *(optional — only needed for Arch HUD integration)*
 
 ### Ship (No Screen version)
 - 1x Programming Board
@@ -31,6 +32,7 @@ Most players will use one ship PB and Navigator_Base. If you are part of an org,
 - 1x Receiver
 - 1x Emitter
 - 1x Screen Unit *(optional — only needed for the Theme Editor)*
+- 1x Databank *(optional — only needed for Arch HUD integration)*
 
 ### Personal Base
 - 1x Programming Board
@@ -57,6 +59,7 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 | 1 | Databank |
 | 2 | Receiver |
 | 3 | Emitter |
+| 4 | Arch HUD Databank *(optional — shared with your Arch HUD control seat)* |
 
 ### Navigator_Ship_NoScreen
 | Slot | Element |
@@ -65,6 +68,7 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 | 1 | Receiver |
 | 2 | Emitter |
 | 3 | Screen Unit *(optional — for Theme Editor only)* |
+| 4 | Arch HUD Databank *(optional — shared with your Arch HUD control seat)* |
 
 ### Navigator_Base
 | Slot | Element |
@@ -100,7 +104,6 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 |-----------|---------|-------------|
 | `CustomAtlas` | `atlas` | Atlas file to load. Leave as default unless you have a custom atlas in `autoconf/custom/`. |
 | `BaseChannel` | `NavBase` | Channel name for your personal base. Must match your base PB's channel. |
-| `AutopilotCmd` | *(blank)* | *(Work in progress)* Autopilot command prefix. Set to `/goto` for Saga HUD or `/` for Arch HUD. Leave blank to disable. |
 | `CalcSpeed` | `30000` | Your max speed in space in km/h for travel time calculations. |
 | `CalcThrust` | `0` | Your ship's total thrust in kN — read this directly from your ship's stats screen. Acceleration is calculated automatically using your ship's current mass. Leave at `0` to use `CalcAccel` instead. |
 | `CalcBrake` | `0` | Your ship's total brake force in kN from your ship's stats screen. When set, the script decelerates using brakes rather than a flip-and-burn. Leave at `0` to let the script read brake force automatically from the construct; if that also fails it falls back to using thrust for deceleration. |
@@ -110,8 +113,10 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 #### No Screen version only
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `HudX` | `13` | HUD left position as a percentage from the screen edge. This always takes effect — change it here to move the HUD without needing to sit in the seat. |
-| `HudY` | `15` | HUD top position as a percentage from the screen edge. Same as above. |
+| `HudX` | `13` | HUD left position as a percentage from the left screen edge. Change this and reimport to move the HUD without needing to be seated. |
+| `HudY` | `15` | HUD top position as a percentage from the top screen edge. Same as above. |
+
+> You can also move the HUD while seated using the `hudpos X Y` chat command — changes take effect immediately without reimporting.
 
 ### Navigator_Base
 
@@ -148,12 +153,13 @@ No export parameters. It reads its channel and org name from the shared databank
 ### At the Org Base
 
 1. Place both the Admin PB and the Sync PB.
-2. Connect them to the **same databank**.
-3. Connect each PB to its own Screen, Receiver, and Emitter.
-4. Set `OrgChannel` on the Admin PB (e.g. `NavAlliance`).
-5. Set `OrgName` on the Admin PB (e.g. `Alliance`).
-6. Turn on the Admin PB first — this writes the channel and name to the databank.
-7. Turn on the Sync PB — it reads those values automatically. The channel name is shown on its screen.
+2. Connect both to the **same databank**.
+3. Connect the Admin PB to its own Screen only.
+4. Connect the Sync PB to its own Screen, Receiver, and Emitter.
+5. Set `OrgChannel` on the Admin PB (e.g. `NavAlliance`).
+6. Set `OrgName` on the Admin PB (e.g. `Alliance`).
+7. Turn on the Admin PB first — this writes the channel and name to the databank.
+8. Turn on the Sync PB — it reads those values automatically. The channel name is shown on its screen.
 
 ### On Each Ship (First-time connection to an org)
 
@@ -202,12 +208,13 @@ Type these in Lua chat while the PB is running:
 | Command | Description |
 |---------|-------------|
 | `add NAME ::pos{...}` | Add or update a waypoint |
+| `add NAME` | Add a waypoint at your current position |
 | `rename NEWNAME` | Rename the selected WP or route |
 | `setpos ::pos{...}` | Update coords of the selected WP or stop |
 | `del` | Delete the selected WP, route, or stop |
 | `newroute NAME` | Create a new route |
 | `addstop WPNAME` | Add a saved WP as the next stop on the selected route |
-| `addstop ::pos{...}` | Add a position as the next stop |
+| `addstop ::pos{...}` | Add a position as the next stop on the selected route |
 | `delstop N` | Remove stop number N from the selected route |
 | `sync` | Sync from personal base |
 | `orgsync` | Sync from the org on the current tab |
@@ -221,6 +228,13 @@ Type these in Lua chat while the PB is running:
 ## Using the No Screen Version
 
 The HUD appears as an AR overlay. Press **Left Shift** to show or hide it.
+
+### AR HUD Positioning
+
+The HUD position is set by the `HudX` and `HudY` export parameters (percentage from the left and top edges of the screen). You can change these and reimport the PB to move the HUD, or use the chat command while seated:
+
+- `hudpos X Y` — move the HUD immediately, e.g. `hudpos 10 20`
+- `hudpos` — print the current HUD position to Lua chat
 
 ### Navigation Controls
 | Keys | Action |
@@ -244,6 +258,14 @@ The HUD appears as an AR overlay. Press **Left Shift** to show or hide it.
 ### Chat Commands (no screen version)
 | Command | Description |
 |---------|-------------|
+| `add NAME` | Add a waypoint at your current position |
+| `add NAME ::pos{...}` | Add or update a waypoint with specific coords |
+| `del NAME` | Delete a waypoint by name |
+| `newroute NAME` | Create a new route |
+| `addstop ROUTE WP` | Add a saved WP as the next stop on a route |
+| `addstop ROUTE ::pos{...}` | Add a position as the next stop on a route |
+| `delstop ROUTE N` | Remove stop number N from a route |
+| `delroute NAME` | Delete a route |
 | `nav NAME` | Navigate to a waypoint or route by name |
 | `nav off` | Clear navigation |
 | `next` / `prev` | Next / previous route stop |
@@ -253,12 +275,41 @@ The HUD appears as an AR overlay. Press **Left Shift** to show or hide it.
 | `push` | Push to personal base |
 | `orgpush` | Push to the active org |
 | `org NAME` | Switch active org context |
-| `hudpos X Y` | Move the HUD while seated (e.g. `hudpos 5 5`). Same as changing `HudX`/`HudY` but takes effect immediately without reimporting. |
 | `search NAME` | Filter atlas by name |
+| `search` | Clear atlas filter |
+| `hudpos X Y` | Move the HUD while seated (e.g. `hudpos 10 20`) |
+| `hudpos` | Show current HUD position |
 | `status` | Show current nav target and distance |
 | `list` | List all waypoints |
 | `routes` | List all routes |
 | `help` | Show all commands in Lua chat |
+
+---
+
+## Arch HUD Integration
+
+The Navigator can send waypoints directly to Arch HUD as a temporary navigation target. No receiver or extra hardware needed — it uses a shared databank.
+
+### Setup
+
+1. Copy `tools/archhud_userclass.lua` from the Navigator files to:
+   ```
+   Game Install\Game\data\lua\autoconf\custom\archhud\userclass.lua
+   ```
+   The file **must** be named `userclass.lua` exactly.
+
+2. In the game, link the **same databank** that your Arch HUD control seat uses to slot 4 of your Navigator PB.
+
+3. That's it. When the Navigator PB starts it will print `[NAV] archbank=OK` confirming the connection.
+
+### How it works
+
+Every time you navigate to a waypoint or route stop, the Navigator writes the destination to the shared databank. Arch HUD reads it on the next tick, sets it as a temporary nav target (same as typing the `::pos` in chat), and clears the key. Nothing is saved permanently in Arch.
+
+You will see these messages in Lua chat when it fires:
+- `[NAV] archbank=OK` — on PB start, confirms the databank is linked
+- `[NAV] wrote to archbank: NAME` — each time a waypoint is sent
+- `[NAV] Navigating: NAME` — standard nav status message
 
 ---
 
@@ -278,7 +329,7 @@ See [THEME_GUIDE.md](THEME_GUIDE.md) for a full description of what each color s
 
 ## Travel Time Calculator
 
-Set two export parameters on your ship PB:
+Set these export parameters on your ship PB:
 
 - **CalcSpeed** — your max speed in space in km/h. Check your HUD at top speed. Typical: `20000`–`50000`.
 - **CalcThrust** — your ship's total thrust in kN, shown on the ship stats screen. The script divides this by your current mass automatically, so the calculation stays accurate as your cargo changes. Recommended over `CalcAccel`.
@@ -332,3 +383,8 @@ Travel time shows:
 **Theme Editor doesn't open on No Screen version**
 - A Screen Unit must be connected to slot 3 of the PB.
 - The screen must be activated — it will show "THEME EDITOR" when the PB is running and the picker is closed.
+
+**Arch HUD does not respond to waypoints**
+- Check that `[NAV] archbank=OK` prints when the Navigator PB starts. If it doesn't, slot 4 is not connected to the correct databank.
+- Make sure the `userclass.lua` file is placed at exactly: `Game\data\lua\autoconf\custom\archhud\userclass.lua`
+- Make sure the databank in slot 4 is the same physical databank that your Arch HUD control seat is linked to.

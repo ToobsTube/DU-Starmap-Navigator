@@ -315,7 +315,6 @@ local VERSION="v2.0.0"
 Atlas        =nil
 CustomAtlas ="atlas"   --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
-AutopilotCmd=""        --export: Autopilot command prefix e.g. /goto or / (blank = disabled)
 CalcSpeed   =30000    --export: Time Calc max speed in space in km/h (e.g. 30000)
 CalcThrust  =0        --export: Time Calc total thrust in kN from ship stats (0 = use CalcAccel fallback)
 CalcBrake   =0        --export: Time Calc total brake force in kN from ship stats (0 = auto-detect, fallback to thrust)
@@ -560,10 +559,6 @@ function SendAutopilot(name, coords)
     archbank.setStringValue("nav_arch_dest", (name or "Navigator").."|"..coords)
     system.print("[NAV] wrote to archbank: "..(name or "Navigator"))
   end
-  -- Legacy AutopilotCmd (chat command fallback)
-  if AutopilotCmd~="" then
-    system.print(AutopilotCmd.." "..coords)
-  end
 end
 
 function SetNavWP(name,tab)
@@ -573,7 +568,7 @@ function SetNavWP(name,tab)
       NavTarget={t="wp",n=wp.n,c=wp.c,tab=tab}
       SaveData(); UpdateWaypoint()
       SendAutopilot(wp.n, wp.c)
-      if AutopilotCmd=="" then SetStatus("Navigating: "..wp.n) end
+      SetStatus("Navigating: "..wp.n)
       return true
     end
   end
@@ -590,7 +585,7 @@ function SetNavRoute(name,tab,startStop)
       SaveData(); UpdateWaypoint()
       local stopLabel=r.n.." stop "..idx.."/"..#r.pts
       SendAutopilot(stopLabel, r.pts[idx].c)
-      if AutopilotCmd=="" then SetStatus("Route: "..stopLabel) end
+      SetStatus("Route: "..stopLabel)
       return true
     end
   end
