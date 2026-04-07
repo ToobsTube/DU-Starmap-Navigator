@@ -197,12 +197,6 @@ for (const cfg of Object.values(CONFIGS)) {
   fs.copyFileSync(src, path.join(STAGE_DIR, cfg.output));
 }
 
-// Tools
-const toolsOut = path.join(STAGE_DIR, 'tools');
-fs.mkdirSync(toolsOut, { recursive: true });
-fs.copyFileSync('dist/tools/Databank_Inspector.txt', path.join(toolsOut, 'Databank_Inspector.txt'));
-fs.copyFileSync('dist/tools/Wipe_Databanks.txt',     path.join(toolsOut, 'Wipe_Databanks.txt'));
-
 // Arch HUD userclass — placed at correct game path, original name preserved
 const archOut = path.join(STAGE_DIR, 'autoconf', 'custom', 'archhud');
 fs.mkdirSync(archOut, { recursive: true });
