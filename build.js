@@ -176,3 +176,46 @@ for (const [, cfg] of Object.entries(TOOLS)) {
   console.log(`  OK  (${duHandlers.length} handlers)`);
 }
 console.log('\nDone. Import .txt files from dist/ into DU programming boards.');
+
+// ── Package ───────────────────────────────────────────────────────────────────
+console.log('\n=== Package ===');
+
+const { execSync } = require('child_process');
+const os = require('os');
+
+const VERSION    = 'v2.0';
+const STAGE_DIR  = path.join(os.tmpdir(), 'nav_release');
+const ZIP_OUT    = path.resolve(`dist/Navigator_${VERSION}.zip`);
+
+// Clean and rebuild staging area
+fs.rmSync(STAGE_DIR, { recursive: true, force: true });
+fs.mkdirSync(STAGE_DIR, { recursive: true });
+
+// PB files
+for (const cfg of Object.values(CONFIGS)) {
+  const src = path.join('dist', cfg.output);
+  fs.copyFileSync(src, path.join(STAGE_DIR, cfg.output));
+}
+
+// Tools
+const toolsOut = path.join(STAGE_DIR, 'tools');
+fs.mkdirSync(toolsOut, { recursive: true });
+fs.copyFileSync('dist/tools/Databank_Inspector.txt', path.join(toolsOut, 'Databank_Inspector.txt'));
+fs.copyFileSync('dist/tools/Wipe_Databanks.txt',     path.join(toolsOut, 'Wipe_Databanks.txt'));
+
+// Arch HUD userclass — placed at correct game path, original name preserved
+const archOut = path.join(STAGE_DIR, 'autoconf', 'custom', 'archhud');
+fs.mkdirSync(archOut, { recursive: true });
+fs.copyFileSync('tools/archhud_userclass.lua', path.join(archOut, 'archhud_userclass.lua'));
+
+// Docs
+fs.copyFileSync('INSTRUCTIONS.md', path.join(STAGE_DIR, 'INSTRUCTIONS.md'));
+fs.copyFileSync('THEME_GUIDE.md',  path.join(STAGE_DIR, 'THEME_GUIDE.md'));
+
+// Zip
+if (fs.existsSync(ZIP_OUT)) fs.rmSync(ZIP_OUT);
+const stageGlob = path.join(STAGE_DIR, '*');
+execSync(`powershell -Command "Compress-Archive -Path '${stageGlob}' -DestinationPath '${ZIP_OUT}'"`, { stdio: 'inherit' });
+
+fs.rmSync(STAGE_DIR, { recursive: true, force: true });
+console.log(`  Created: ${ZIP_OUT}`);

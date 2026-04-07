@@ -292,11 +292,13 @@ The Navigator can send waypoints directly to Arch HUD as a temporary navigation 
 
 ### Setup
 
-1. Copy `tools/archhud_userclass.lua` from the Navigator files to:
-   ```
-   Game Install\Game\data\lua\autoconf\custom\archhud\userclass.lua
-   ```
-   The file **must** be named `userclass.lua` exactly.
+1. In the release ZIP the file is already placed at the correct path:
+   `autoconf\custom\archhud\archhud_userclass.lua`
+   Copy that folder into your game's `data\lua\` directory, then
+   **rename `archhud_userclass.lua` to `userclass.lua`** in that folder.
+   It will not work until it is renamed. The file is left with its original
+   name so it does not overwrite an existing `userclass.lua` if you already
+   have one — see the note in the file itself if you need to merge.
 
 2. In the game, link the **same databank** that your Arch HUD control seat uses to slot 4 of your Navigator PB.
 
