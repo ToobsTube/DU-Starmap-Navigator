@@ -902,6 +902,7 @@ SelWP        = ""   -- full name (with prefix)
 SelRoute     = ""   -- full name (with prefix)
 SelStop      = 0
 ActiveTab    = "Personal"
+AllowedShips = {}   -- whitelist of ship IDs; empty = allow all
 StatusMsg    = ""; StatusExpiry=0
 SendQueue    = {}
 SendIndex    = 1
@@ -913,9 +914,10 @@ LastScreenOut= ""
 function LoadData()
   if not databank then WaypointList={};RouteList={};OrgNames={};OrgData={};return end
   local function jd(k) local v=databank.getStringValue(k); return (v and v~="") and json.decode(v) or nil end
-  WaypointList = jd("waypoints")  or {}
-  RouteList    = jd("routes")     or {}
-  OrgNames     = jd("org_names")  or {}
+  WaypointList = jd("waypoints")     or {}
+  RouteList    = jd("routes")        or {}
+  OrgNames     = jd("org_names")     or {}
+  AllowedShips = jd("allowed_ships") or {}
   OrgData      = {}
   for _,org in ipairs(OrgNames) do
     local ch  = databank.getStringValue("org_"..org.."_ch")  or ""
@@ -927,9 +929,10 @@ end
 
 function SaveData()
   if not databank then return end
-  databank.setStringValue("waypoints", json.encode(WaypointList))
-  databank.setStringValue("routes",    json.encode(RouteList))
-  databank.setStringValue("org_names", json.encode(OrgNames))
+  databank.setStringValue("waypoints",     json.encode(WaypointList))
+  databank.setStringValue("routes",        json.encode(RouteList))
+  databank.setStringValue("org_names",     json.encode(OrgNames))
+  databank.setStringValue("allowed_ships", json.encode(AllowedShips))
   for _,org in ipairs(OrgNames) do
     local od=OrgData[org]
     if od then
@@ -1514,9 +1517,23 @@ end
 
 if message:find("<RequestSync>",1,true) then
   if Sending then return end
-  local who=message:gsub("<RequestSync>","")
+  local raw=message:gsub("<RequestSync>","")
+  local shipID=raw:match("^([^|]+)") or raw
+  local pname=raw:match("|pname:(.+)$") or ""
+  if #AllowedShips>0 then
+    local ok=false
+    for _,s in ipairs(AllowedShips) do
+      local sl=s:lower()
+      if sl==shipID:lower() or (pname~="" and sl==pname:lower()) then ok=true; break end
+    end
+    if not ok then
+      local label=shipID..(pname~="" and " ("..pname..")" or "")
+      system.print("[BASE] Sync denied: "..label)
+      return
+    end
+  end
   PushOrgName=nil  -- reset context for new sync session
-  StartSend(who)
+  StartSend(shipID..(pname~="" and " ("..pname..")" or ""))
 end
 
 
@@ -1543,6 +1560,10 @@ if lo=="help" then
   system.print("routes              list routes on active tab")
   system.print("tab NAME            switch active tab")
   system.print("listorgs            show cached orgs and counts")
+  system.print("── Sync whitelist ────────────────")
+  system.print("allow NAME          allow player name or ship ID")
+  system.print("deny NAME           remove player name or ship ID")
+  system.print("allowlist           show whitelist (empty=all allowed)")
   system.print("── Theme ─────────────────────────")
   system.print("theme              show all theme colors")
   system.print("theme accent #HEX  set element by hex")
@@ -1692,6 +1713,41 @@ if lo=="listorgs" then
   for _,o in ipairs(OrgNames) do
     local od=OrgData[o] or {}
     system.print("  "..o.."  ch:"..(od.channel or "?").."  WPs:"..(#(od.wps or {})).."  Routes:"..(#(od.routes or {})))
+  end
+  return
+end
+
+-- ── Sync whitelist commands ───────────────────────────────────
+local allowArg=t:match("^[Aa][Ll][Ll][Oo][Ww]%s+(.+)")
+if allowArg then
+  allowArg=Trim(allowArg)
+  for _,s in ipairs(AllowedShips) do
+    if s:lower()==allowArg:lower() then SetStatus("Already allowed: "..allowArg); return end
+  end
+  table.insert(AllowedShips,allowArg)
+  SaveData(); system.print("[BASE] Allowed: "..allowArg)
+  SetStatus("Allowed: "..allowArg); PushState(); return
+end
+
+local denyArg=t:match("^[Dd][Ee][Nn][Yy]%s+(.+)")
+if denyArg then
+  denyArg=Trim(denyArg)
+  for i,s in ipairs(AllowedShips) do
+    if s:lower()==denyArg:lower() then
+      table.remove(AllowedShips,i)
+      SaveData(); system.print("[BASE] Removed: "..denyArg)
+      SetStatus("Removed: "..denyArg); PushState(); return
+    end
+  end
+  SetStatus("Not in list: "..denyArg); return
+end
+
+if lo=="allowlist" then
+  if #AllowedShips==0 then
+    system.print("[BASE] Whitelist empty — all ships allowed")
+  else
+    system.print("─── SYNC WHITELIST ("..(#AllowedShips)..") ───")
+    for i,s in ipairs(AllowedShips) do system.print("  "..i..".  "..s) end
   end
   return
 end

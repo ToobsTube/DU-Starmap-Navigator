@@ -606,6 +606,7 @@ PushQueue    = {}
 PushQueueCh  = ""
 PushQueueIdx = 1
 PushSending  = false
+AutoFly      = false
 HudPX        = 13    -- runtime HUD X% (set from databank or HudX export)
 HudPY        = 15    -- runtime HUD Y% (set from databank or HudY export)
 
@@ -629,6 +630,7 @@ function LoadData()
     OrgData[org]={wps=jd(k.."_wps") or {},routes=jd(k.."_routes") or {},channel=databank.getStringValue(k.."_ch") or ""}
   end
   NavTarget=jd("nav_target")
+  AutoFly=(databank.getStringValue("autofly")=="1")
   ShipID=BuildShipID()
   -- Export params always win for position; databank only used if export is at default
   local hx=tonumber(databank.getStringValue("hud_x"))
@@ -649,6 +651,7 @@ function SaveData()
     databank.setStringValue(k.."_ch",     OrgData[org].channel or "")
   end
   databank.setStringValue("nav_target", NavTarget and json.encode(NavTarget) or "")
+  databank.setStringValue("autofly", AutoFly and "1" or "0")
   databank.setStringValue("hud_x", tostring(HudPX))
   databank.setStringValue("hud_y", tostring(HudPY))
 end
@@ -761,10 +764,14 @@ end
 
 function SendAutopilot(name, coords)
   if not coords or coords=="" then return end
-  -- Arch HUD databank integration: write to Arch's databank (slot 4, optional)
+  -- HUD databank integration: write to shared databank (slot 4, optional)
+  -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest
   if archbank then
-    archbank.setStringValue("nav_arch_dest", (name or "Navigator").."|"..coords)
-    system.print("[NAV] wrote to archbank: "..(name or "Navigator"))
+    local dest = (name or "Navigator").."|"..coords
+    archbank.setStringValue("nav_arch_dest", dest)
+    archbank.setStringValue("nav_saga_dest", dest)
+    archbank.setStringValue("autofly", AutoFly and "1" or "0")
+    system.print("[NAV] sent to HUD bank: "..(name or "Navigator"))
   end
 end
 
@@ -851,7 +858,7 @@ end
 function RequestSync(ch)
   if not emitter then SetStatus("No emitter") return end
   SyncingChannel=ch; UpdateChannels()
-  emitter.send(ch,"<RequestSync>"..ShipID.."|pid:"..GetPlayerID())
+  emitter.send(ch,"<RequestSync>"..ShipID.."|pid:"..GetPlayerID().."|pname:"..GetPlayerName())
   SetStatus("Sync requested on "..ch)
 end
 
@@ -859,7 +866,7 @@ function PushToChannel(ch,wps,routes)
   if not emitter then SetStatus("No emitter") return end
   PushQueue={}
   for _,wp in ipairs(wps) do
-    table.insert(PushQueue,{type="wp",  data={n=wp.n,c=wp.c}})
+    if not wp.lk then table.insert(PushQueue,{type="wp",  data={n=wp.n,c=wp.c}}) end
   end
   for _,r in ipairs(routes) do
     table.insert(PushQueue,{type="route",data={n=r.n,pts=r.pts}})
@@ -917,7 +924,7 @@ function GetSubItems()
     for _,wp in ipairs(PersonalWPs) do
       local tp=ParsePos(wp.c)
       local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
-      table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx="personal"})
+      table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx="personal",lk=wp.lk})
     end
     if #items==0 then table.insert(items,{type="info",label="No waypoints  —  type: add NAME"}) end
 
@@ -934,7 +941,7 @@ function GetSubItems()
         for _,wp in ipairs(owps) do
           local tp=ParsePos(wp.c)
           local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
-          table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx=ActiveOrg})
+          table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx=ActiveOrg,lk=wp.lk})
         end
       end
       if #orts>0 then
@@ -1147,7 +1154,12 @@ function DrawHUD()
     local dist=(tp and cp2) and FormatDist(CalcDist(cp2,tp)) or "---"
     local lbl=(NavTarget.t=="route") and "ROUTE" or "WP"
     local si2=(NavTarget.t=="route") and string.format(" [%d/%d]",NavTarget.stopIdx,NavTarget.stopTotal) or ""
-    h[#h+1]=string.format('<div class="nav">&#9658; %s: %s%s &nbsp; %s</div>', lbl, NavTarget.n:sub(1,20), si2, dist)
+    local lkTag=""
+    if NavTarget.t=="wp" then
+      local wps=ContextWPs()
+      for _,wp in ipairs(wps) do if wp.n:lower()==NavTarget.n:lower() and wp.lk then lkTag=string.format(' <span style="color:%s">[LK]</span>',cA); break end end
+    end
+    h[#h+1]=string.format('<div class="nav">&#9658; %s: %s%s%s &nbsp; %s</div>', lbl, NavTarget.n:sub(1,20), si2, lkTag, dist)
   else
     h[#h+1]='<div class="nav" style="color:rgb(65,85,115);">&#9658; No target</div>'
   end
@@ -1176,8 +1188,9 @@ function DrawHUD()
       h[#h+1]=string.format('<div class="ri"%s>%s</div>', style, item.label)
     elseif item.type=="wp" then
       local cls="rr rw"..(isSel and " rsel" or "")
-      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.65">%s</span><span class="arr">&#62;</span></span></div>',
-        cls, sIdx, item.n:sub(1,18), item.dist or "---")
+      local lkBadge=item.lk and string.format(' <span style="color:%s;font-size:%dpx">LK</span>',cA,fsS) or ""
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s%s</span><span><span style="opacity:0.65">%s</span><span class="arr">&#62;</span></span></div>',
+        cls, sIdx, item.n:sub(1,18), lkBadge, item.dist or "---")
     elseif item.type=="route" then
       local cls="rr rrt"..(isSel and " rsel" or "")
       h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.65">%d stops</span><span class="arr">&#62;</span></span></div>',
@@ -1306,7 +1319,7 @@ LoadData()
 ThemeSlots=LoadTheme()
 Palette=DeriveTheme(ThemeSlots)
 UpdateChannels()
-if archbank then system.print("[NAV] archbank=OK") end
+if archbank then system.print("[NAV] HUD bank=OK (Arch+Saga)") end
 unit.setTimer("nav_tick",5)
 UpdateWaypoint()
 if screen then
@@ -1348,6 +1361,29 @@ slot=-1
 event=onTimer(tag)
 args="nav_tick"
 ]]
+if AutoFly and NavTarget and NavTarget.t=="route" then
+  local cp=GetCurrentPos()
+  local tp=cp and ParsePos(NavTarget.c)
+  if tp then
+    local dist=CalcDist(cp,tp)
+    local inAtmo=(unit.getAtmosphereDensity() or 0)>0
+    local advance
+    if inAtmo then
+      advance = dist and dist<2000
+    else
+      local vel=construct.getVelocity()
+      local speed=vel and math.sqrt(vel[1]*vel[1]+vel[2]*vel[2]+vel[3]*vel[3]) or 0
+      advance = dist and dist<10000 and speed<50
+    end
+    if advance then
+      if NavTarget.stopIdx>=NavTarget.stopTotal then
+        AutoFly=false
+        if databank then databank.setStringValue("autofly","0") end
+        SetStatus("Route complete — Auto Fly off")
+      else NextStop() end
+    end
+  end
+end
 if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg="" end
 UpdateWaypoint()
 DrawHUD()
@@ -1565,16 +1601,16 @@ if message:find("<SyncWP>",1,true) then
       EnsureOrg(SyncOrgName)
       local list=OrgData[SyncOrgName].wps
       local found=false
-      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
       if not found then table.insert(list,{n=wp.n,c=wp.c}) end
     elseif SyncContext~="personal" and OrgData[SyncContext] then
       local list=OrgData[SyncContext].wps
       local found=false
-      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
       if not found then table.insert(list,{n=wp.n,c=wp.c}) end
     else
       local found=false
-      for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
       if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c}) end
     end
   end
@@ -1627,7 +1663,7 @@ if message:find("<PushWP>",1,true) then
   local ok,wp=pcall(json.decode,raw)
   if ok and wp and wp.n and wp.c then
     local found=false
-    for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+    for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
     if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c}) end
     SaveData()
   end
@@ -1654,12 +1690,16 @@ if lo=="help" then
   system.print("nav NAME               navigate to WP or route")
   system.print("nav off                clear nav")
   system.print("next / prev            next/prev stop")
+  system.print("lock NAME              lock WP (won't push or be overwritten by sync)")
+  system.print("unlock NAME            unlock WP")
+  system.print("autofly on/off         auto-advance route stops")
   system.print("sync / orgsync         sync from base")
   system.print("push / orgpush         push to base")
   system.print("firstsync CHANNEL      first-time org sync, e.g: firstsync NavOrg")
   system.print("org NAME               switch active context")
   system.print("search NAME            filter atlas by name")
   system.print("search                 clear atlas filter")
+  system.print("coords NAME            print WP coords to console")
   system.print("list / routes          list items")
   system.print("status                 show current nav")
   system.print("hudpos X Y              move HUD (e.g. hudpos 13 15)")
@@ -1707,8 +1747,17 @@ local nrN=t:match("^[Nn][Ee][Ww][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
 if nrN then AddRoute(Trim(nrN)); return end
 
 local asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s+(::pos%b{})")
-if not asRT then asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s*$") end
-if asRT then AddStop(Trim(asRT),Trim(asArg or "")); return end
+if not asRT then asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s+([^%s].+)$") end
+if not asRT then asRT=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s*$") end
+if asRT then
+  local arg=Trim(asArg or "")
+  -- "here" keyword: use current nav target WP coords
+  if arg=="" or arg:lower()=="here" then
+    if NavTarget and NavTarget.c then arg=NavTarget.c
+    else SetStatus("No nav target — nav to a WP first, then: addstop ROUTE here"); return end
+  end
+  AddStop(Trim(asRT),arg); return
+end
 
 local dsRT,dsN=t:match("^[Dd][Ee][Ll][Ss][Tt][Oo][Pp]%s+(.-)%s+(%d+)%s*$")
 if dsRT then DelStop(Trim(dsRT),tonumber(dsN)); return end
@@ -1729,6 +1778,35 @@ end
 
 if lo=="next"    then NextStop(); return end
 if lo=="prev"    then PrevStop(); return end
+local lkN=t:match("^[Ll][Oo][Cc][Kk]%s+(.*)")
+if lkN~=nil then
+  lkN=Trim(lkN)
+  if lkN=="" then SetStatus("Usage: lock WPNAME"); return end
+  local wps=ContextWPs()
+  for _,wp in ipairs(wps) do if wp.n:lower()==lkN:lower() then wp.lk=true; SaveData(); SetStatus("Locked: "..wp.n); return end end
+  SetStatus("WP not found: "..lkN); return
+end
+local ulN=t:match("^[Uu][Nn][Ll][Oo][Cc][Kk]%s+(.*)")
+if ulN~=nil then
+  ulN=Trim(ulN)
+  if ulN=="" then SetStatus("Usage: unlock WPNAME"); return end
+  local wps=ContextWPs()
+  for _,wp in ipairs(wps) do if wp.n:lower()==ulN:lower() then wp.lk=nil; SaveData(); SetStatus("Unlocked: "..wp.n); return end end
+  SetStatus("WP not found: "..ulN); return
+end
+local afCmd=lo:match("^autofly%s*(.*)")
+if afCmd~=nil then
+  if afCmd=="on" or afCmd=="1" then
+    AutoFly=true
+    if databank then databank.setStringValue("autofly","1") end
+    SetStatus("Auto Fly: ON")
+  elseif afCmd=="off" or afCmd=="0" then
+    AutoFly=false
+    if databank then databank.setStringValue("autofly","0") end
+    SetStatus("Auto Fly: OFF")
+  else SetStatus("Auto Fly is "..(AutoFly and "ON" or "OFF").."  —  autofly on / autofly off") end
+  return
+end
 local fsCh=t:match("^[Ff][Ii][Rr][Ss][Tt][Ss][Yy][Nn][Cc]%s+(.+)")
 if fsCh then RequestSync(Trim(fsCh)); return end
 if lo=="firstsync" then SetStatus("Usage: firstsync CHANNEL  (channel shown on org sync PB screen)"); return end
@@ -1768,6 +1846,19 @@ if lo=="status" then
   system.print("[NAV] "..(NavTarget.t=="route" and "[ROUTE]" or "[WP]").." "..NavTarget.n.."  "..dist)
   if NavTarget.t=="route" then system.print("[NAV] Stop "..NavTarget.stopIdx.."/"..NavTarget.stopTotal) end
   return
+end
+
+local coordN=t:match("^[Cc][Oo][Oo][Rr][Dd][Ss]%s+(.*)")
+if coordN~=nil then
+  coordN=Trim(coordN)
+  if coordN=="" then SetStatus("Usage: coords WPNAME"); return end
+  local wps=ContextWPs()
+  for _,wp in ipairs(wps) do
+    if wp.n:lower()==coordN:lower() then
+      system.print("[NAV] "..wp.n.."  "..wp.c); return
+    end
+  end
+  SetStatus("WP not found: "..coordN); return
 end
 
 if lo=="list" then

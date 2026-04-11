@@ -202,6 +202,14 @@ const archOut = path.join(STAGE_DIR, 'autoconf', 'custom', 'archhud');
 fs.mkdirSync(archOut, { recursive: true });
 fs.copyFileSync('tools/archhud_userclass.lua', path.join(archOut, 'archhud_userclass.lua'));
 
+// Saga HUD patched JSON — optional, warn if missing
+const sagaSrc = 'tools/Saga_AP_4.22_Nav.json';
+if (fs.existsSync(sagaSrc)) {
+  fs.copyFileSync(sagaSrc, path.join(STAGE_DIR, 'Saga_AP_4.22_Nav.json'));
+} else {
+  console.warn('  WARNING: tools/Saga_AP_4.22_Nav.json not found — Saga integration not included in ZIP');
+}
+
 // Docs
 fs.copyFileSync('INSTRUCTIONS.md', path.join(STAGE_DIR, 'INSTRUCTIONS.md'));
 fs.copyFileSync('THEME_GUIDE.md',  path.join(STAGE_DIR, 'THEME_GUIDE.md'));

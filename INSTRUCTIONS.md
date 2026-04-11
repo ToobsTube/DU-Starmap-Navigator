@@ -24,7 +24,7 @@ Most players will use one ship PB and Navigator_Base. If you are part of an org,
 - 1x Databank
 - 1x Receiver
 - 1x Emitter
-- 1x Databank *(optional — only needed for Arch HUD integration)*
+- 1x Databank *(optional — only needed for Arch HUD or Saga HUD integration)*
 
 ### Ship (No Screen version)
 - 1x Programming Board
@@ -32,7 +32,7 @@ Most players will use one ship PB and Navigator_Base. If you are part of an org,
 - 1x Receiver
 - 1x Emitter
 - 1x Screen Unit *(optional — only needed for the Theme Editor)*
-- 1x Databank *(optional — only needed for Arch HUD integration)*
+- 1x Databank *(optional — only needed for Arch HUD or Saga HUD integration)*
 
 ### Personal Base
 - 1x Programming Board
@@ -59,7 +59,7 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 | 1 | Databank |
 | 2 | Receiver |
 | 3 | Emitter |
-| 4 | Arch HUD Databank *(optional — shared with your Arch HUD control seat)* |
+| 4 | HUD Integration Databank *(optional — shared with your Arch HUD or Saga HUD control seat)* |
 
 ### Navigator_Ship_NoScreen
 | Slot | Element |
@@ -68,7 +68,7 @@ Connect slots **in exactly this order** (right-click PB → Configure → drag e
 | 1 | Receiver |
 | 2 | Emitter |
 | 3 | Screen Unit *(optional — for Theme Editor only)* |
-| 4 | Arch HUD Databank *(optional — shared with your Arch HUD control seat)* |
+| 4 | HUD Integration Databank *(optional — shared with your Arch HUD or Saga HUD control seat)* |
 
 ### Navigator_Base
 | Slot | Element |
@@ -148,6 +148,48 @@ No export parameters. It reads its channel and org name from the shared databank
 
 ---
 
+## Sync Whitelist (Personal Base)
+
+By default the base PB responds to a sync request from any ship that knows the channel name. If you want to restrict which ships can sync, you can maintain a whitelist on the base.
+
+**The whitelist is empty by default — empty means allow all.** You only need to set it up if you are worried about others syncing to your base.
+
+### Whitelist commands (type in Lua chat while the base PB is running)
+
+| Command | Description |
+|---------|-------------|
+| `allow NAME` | Add a player name or ship ID to the whitelist |
+| `deny NAME` | Remove an entry from the whitelist |
+| `allowlist` | Show the current whitelist |
+
+### By player name vs ship ID
+
+- `allow ToobsTube` — allows **all ships** flown by that player. Best for whitelisting yourself or a trusted friend regardless of which ship they are in.
+- `allow MyShip#abc123` — allows only that **specific ship** regardless of who is flying it.
+
+You can mix both types in the same list.
+
+### Finding the right name to allow
+
+Two ways:
+
+1. **Let it tell you:** If the whitelist is non-empty and a ship is denied, the Lua console on the base prints:
+   `[BASE] Sync denied: MyShip#abc123 (ToobsTube)`
+   Copy the player name or ship ID from that line and use `allow` with it.
+
+2. **From a successful sync:** The base status line shows `Sending N items to: MyShip#abc123 (ToobsTube)` when a sync is accepted. Use whatever name you want to whitelist.
+
+### Example — locking down your base to your own ships
+
+```
+allow ToobsTube
+allowlist
+```
+
+That one entry covers every ship you fly, now and in the future.
+
+---
+
 ## Org Setup
 
 ### At the Org Base
@@ -193,14 +235,17 @@ The screen has three panels:
 | MARK ROUTE STOP | Adds your current position as a stop on the selected route |
 | NAVIGATE WP | Sets the selected waypoint as your nav target |
 | NAVIGATE ROUTE | Starts the selected route from stop 1 |
-| NEXT STOP / PREV STOP | Move between route stops |
+| NEXT STOP | Advance to the next route stop |
+| AUTO FLY | Toggle automatic route flying — Navigator advances stops and engages autopilot automatically |
 | CLEAR NAV | Removes your current nav target |
+| SHOW COORDS | Prints the selected waypoint's coordinates to the Lua console for copying |
 | SYNC BASE | Pulls waypoints/routes from your personal base |
 | PUSH TO BASE | Sends your waypoints/routes to your personal base |
 | ORG SYNC | Pulls waypoints from the org on the currently active tab |
 | ORG PUSH | Sends waypoints to the org on the currently active tab |
 | FIRST ORG SYNC | Shows a hint — type `firstsync CHANNEL` in Lua chat to add a new org |
 | THEME | Opens the Theme Editor color picker |
+| LK *(in waypoint list)* | Toggle waypoint lock — locked WPs show an LK badge and are excluded from push/sync |
 
 ### Chat Commands (screen version)
 Type these in Lua chat while the PB is running:
@@ -216,6 +261,8 @@ Type these in Lua chat while the PB is running:
 | `addstop WPNAME` | Add a saved WP as the next stop on the selected route |
 | `addstop ::pos{...}` | Add a position as the next stop on the selected route |
 | `delstop N` | Remove stop number N from the selected route |
+| `lock WPNAME` | Lock a waypoint — prevents it being pushed to base or overwritten by sync |
+| `unlock WPNAME` | Remove the lock from a waypoint |
 | `sync` | Sync from personal base |
 | `orgsync` | Sync from the org on the current tab |
 | `firstsync CHANNEL` | First-time sync with a new org (e.g. `firstsync NavOrg`) |
@@ -263,12 +310,17 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | `del NAME` | Delete a waypoint by name |
 | `newroute NAME` | Create a new route |
 | `addstop ROUTE WP` | Add a saved WP as the next stop on a route |
+| `addstop ROUTE here` | Add your current nav target as the next stop |
 | `addstop ROUTE ::pos{...}` | Add a position as the next stop on a route |
 | `delstop ROUTE N` | Remove stop number N from a route |
 | `delroute NAME` | Delete a route |
 | `nav NAME` | Navigate to a waypoint or route by name |
 | `nav off` | Clear navigation |
 | `next` / `prev` | Next / previous route stop |
+| `autofly on` / `autofly off` | Toggle Auto Fly — auto-advances stops and engages HUD autopilot |
+| `lock WPNAME` | Lock a waypoint — prevents push to base or overwrite by sync |
+| `unlock WPNAME` | Remove the lock from a waypoint |
+| `coords WPNAME` | Print a waypoint's coordinates to the Lua console for copying |
 | `sync` | Sync from personal base |
 | `orgsync` | Sync from the active org |
 | `firstsync CHANNEL` | First-time sync with a new org (e.g. `firstsync NavOrg`) |
@@ -302,16 +354,44 @@ The Navigator can send waypoints directly to Arch HUD as a temporary navigation 
 
 2. In the game, link the **same databank** that your Arch HUD control seat uses to slot 4 of your Navigator PB.
 
-3. That's it. When the Navigator PB starts it will print `[NAV] archbank=OK` confirming the connection.
+3. That's it. When the Navigator PB starts it will print `[NAV] HUD bank=OK (Arch+Saga)` confirming the connection.
 
 ### How it works
 
 Every time you navigate to a waypoint or route stop, the Navigator writes the destination to the shared databank. Arch HUD reads it on the next tick, sets it as a temporary nav target (same as typing the `::pos` in chat), and clears the key. Nothing is saved permanently in Arch.
 
 You will see these messages in Lua chat when it fires:
-- `[NAV] archbank=OK` — on PB start, confirms the databank is linked
-- `[NAV] wrote to archbank: NAME` — each time a waypoint is sent
-- `[NAV] Navigating: NAME` — standard nav status message
+- `[NAV] HUD bank=OK (Arch+Saga)` — on PB start, confirms the databank is linked
+- `[NAV] sent to HUD bank: NAME` — each time a waypoint is sent
+
+---
+
+## Saga HUD Integration
+
+The Navigator can send waypoints directly to Saga HUD 4.22 as a temporary navigation target using the same shared databank as Arch HUD.
+
+### Setup
+
+1. In the release ZIP you will find `Saga_AP_4.22_Nav.json`. Import this into your Saga control seat instead of the standard Saga JSON.
+
+2. Link the **same databank** that your Navigator PB uses in slot 4 to your Saga control seat as well.
+
+3. That's it. When the Navigator PB starts it will print `[NAV] HUD bank=OK (Arch+Saga)` confirming the connection.
+
+### How it works
+
+Every time you navigate to a waypoint or route stop, the Navigator writes the destination to the shared databank. Saga reads it on the next tick, calls its internal `/goto` equivalent to set a temporary nav target, and clears the key. Nothing is saved permanently in Saga's route database.
+
+If **Auto Fly** is enabled in Navigator, Saga's autopilot is also engaged automatically after the target is set.
+
+You will see these messages in Lua chat:
+- `[NAV] HUD bank=OK (Arch+Saga)` — on PB start
+- `[NAV] sent to HUD bank: NAME` — each time a waypoint is sent
+- `[NAV] Target: NAME` — from Saga confirming it received the target
+
+### Note on switching between Arch and Saga
+
+The same databank works for both HUDs — no link changes needed when switching. The Navigator writes both `nav_arch_dest` and `nav_saga_dest` keys every time. Whichever HUD is running will pick up its own key and ignore the other.
 
 ---
 
@@ -362,6 +442,11 @@ Travel time shows:
 - Make sure the base PB is running before you type `sync`.
 - Make sure Receiver and Emitter are linked to the correct PBs.
 
+**Base Lua console says "Sync denied"**
+- Your base has a sync whitelist set up and this ship/player is not on it.
+- On the base PB, type `allowlist` to see who is allowed, then `allow PLAYERNAME` to add yourself.
+- See the **Sync Whitelist** section above.
+
 **First org sync doesn't work**
 - Make sure the org's Sync PB is running and you can see its channel on the screen.
 - Type `firstsync CHANNEL` exactly as shown — the channel is case-sensitive if you type it manually, but the script will still try to match it against known channels.
@@ -387,6 +472,17 @@ Travel time shows:
 - The screen must be activated — it will show "THEME EDITOR" when the PB is running and the picker is closed.
 
 **Arch HUD does not respond to waypoints**
-- Check that `[NAV] archbank=OK` prints when the Navigator PB starts. If it doesn't, slot 4 is not connected to the correct databank.
+- Check that `[NAV] HUD bank=OK (Arch+Saga)` prints when the Navigator PB starts. If it doesn't, slot 4 is not connected to a databank.
 - Make sure the `userclass.lua` file is placed at exactly: `Game\data\lua\autoconf\custom\archhud\userclass.lua`
 - Make sure the databank in slot 4 is the same physical databank that your Arch HUD control seat is linked to.
+
+**Saga HUD does not respond to waypoints**
+- Make sure you imported `Saga_AP_4.22_Nav.json` (the patched version), not the standard Saga JSON.
+- Check that `[NAV] HUD bank=OK (Arch+Saga)` prints when the Navigator PB starts.
+- Make sure the databank in slot 4 of the Navigator PB is also linked to your Saga control seat.
+- If you wiped the databank, Navigator's waypoints are also cleared — add a waypoint first before testing.
+- You should see `[NAV] Target: NAME` in the Lua console from Saga when a target is received.
+
+**Saga autopilot enters parking mode and misses the destination (no braking)**
+- You are likely using an older version of the patched Saga JSON where `setTarget` was called before `resetAP`, leaving the AP with no destination and defaulting to parking mode.
+- Fix: re-import `Saga_AP_4.22_Nav.json` from the current release ZIP — the corrected version is included.

@@ -16,7 +16,9 @@ A waypoint and route navigation system for **Dual Universe** built on Programmin
 - **Theme Editor** — Built-in color picker on every PB. Eight color slots control the full UI palette. Themes are saved to the databank and survive restarts.
 - **Atlas** — All planets, moons, and space stations built in. Navigate to any body directly from the UI.
 - **Arch HUD Integration** — Sends waypoints directly to Arch HUD as temporary nav targets via a shared databank. No extra hardware needed.
-- **Saga HUD Integration** — *(Work in progress)* Command prefix support for Saga HUD.
+- **Saga HUD Integration** — Sends waypoints directly to Saga HUD 4.22 as temporary nav targets via the same shared databank. Use `Saga_AP_4.22_Nav.json` from the Saga HUD folder.
+- **Auto Fly** — Toggle that auto-advances route stops and auto-engages the connected HUD's autopilot. Screen version has an AUTO FLY button; no-screen version uses `autofly on/off`.
+- **Waypoint Lock** — Per-waypoint lock flag (`lock`/`unlock` commands) that prevents locked waypoints from being pushed to base or overwritten by org syncs. Useful for ship-specific landing coords.
 
 ---
 

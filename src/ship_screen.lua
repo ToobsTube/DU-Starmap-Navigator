@@ -348,6 +348,7 @@ PushQueue    = {}
 PushQueueCh  = ""
 PushQueueIdx = 1
 PushSending  = false
+AutoFly      = false
 
 -- Theme state
 ShowThemePicker = false
@@ -370,6 +371,7 @@ function LoadData()
     OrgData[org]={wps=jd(k.."_wps") or {}, routes=jd(k.."_routes") or {}, channel=databank.getStringValue(k.."_ch") or ""}
   end
   NavTarget = jd("nav_target")
+  AutoFly   = (databank.getStringValue("autofly")=="1")
   ShipID = BuildShipID()
 end
 
@@ -385,6 +387,7 @@ function SaveData()
     databank.setStringValue(k.."_ch",     OrgData[org].channel or "")
   end
   databank.setStringValue("nav_target", NavTarget and json.encode(NavTarget) or "")
+  databank.setStringValue("autofly", AutoFly and "1" or "0")
 end
 
 -- ── Tab helpers ───────────────────────────────────────────────
@@ -554,10 +557,14 @@ end
 
 function SendAutopilot(name, coords)
   if not coords or coords=="" then return end
-  -- Arch HUD databank integration: write to Arch's databank (slot 4, optional)
+  -- HUD databank integration: write to shared databank (slot 4, optional)
+  -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest
   if archbank then
-    archbank.setStringValue("nav_arch_dest", (name or "Navigator").."|"..coords)
-    system.print("[NAV] wrote to archbank: "..(name or "Navigator"))
+    local dest = (name or "Navigator").."|"..coords
+    archbank.setStringValue("nav_arch_dest", dest)
+    archbank.setStringValue("nav_saga_dest", dest)
+    archbank.setStringValue("autofly", AutoFly and "1" or "0")
+    system.print("[NAV] sent to HUD bank: "..(name or "Navigator"))
   end
 end
 
@@ -644,7 +651,7 @@ end
 function RequestSync(ch)
   if not emitter then SetStatus("No emitter") return end
   SyncingChannel=ch; UpdateChannels()
-  emitter.send(ch,"<RequestSync>"..ShipID.."|pid:"..GetPlayerID())
+  emitter.send(ch,"<RequestSync>"..ShipID.."|pid:"..GetPlayerID().."|pname:"..GetPlayerName())
   SetStatus("Sync requested on "..ch)
 end
 
@@ -652,7 +659,7 @@ function PushToChannel(ch,wps,routes)
   if not emitter then SetStatus("No emitter") return end
   PushQueue={}
   for _,wp in ipairs(wps) do
-    table.insert(PushQueue,{type="wp",  data={n=wp.n,c=wp.c}})
+    if not wp.lk then table.insert(PushQueue,{type="wp",  data={n=wp.n,c=wp.c}}) end
   end
   for _,r in ipairs(routes) do
     table.insert(PushQueue,{type="route",data={n=r.n,pts=r.pts}})
@@ -790,7 +797,11 @@ function BuildScreenScript()
     local t={}
     for _,v in ipairs(list) do
       if v.n and v.c then
-        table.insert(t, string.format("{n=%q,c=%q}", v.n, v.c))
+        if v.lk then
+          table.insert(t, string.format("{n=%q,c=%q,lk=true}", v.n, v.c))
+        else
+          table.insert(t, string.format("{n=%q,c=%q}", v.n, v.c))
+        end
       elseif type(v)=="string" then
         table.insert(t, string.format("%q", v))
       end
@@ -865,6 +876,7 @@ local TABS=%s
 local ATLASBODIES=%s
 local ORG_CHANNELS=%s
 local ShowFirstSync=%s
+local AutoFly=%s
 ]],
     P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
     P.bgr,P.bgg,P.bgb,
@@ -884,7 +896,7 @@ local ShowFirstSync=%s
     ScrollWP,ScrollRT,SelWP,SelRoute,SelStop,
     nName,nDist,nTime,nCoord,nType,nStop,nTotal,
     StatusMsg,ActiveTab,atlasTabIdx,AtlasSearch,wpLit,rtLit,ptLit,tnLit,atLit,
-    orgChLit,tostring(ShowFirstSync))
+    orgChLit,tostring(ShowFirstSync),tostring(AutoFly))
 
   S[2]=[[
 local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
@@ -1029,9 +1041,18 @@ else
     addText(Lt,fS,idx..".",wpX+28,ry+C/2)
     local L=(sel or hv) and Ls or Lt
     if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
+    local lkW=20 local lkX=wpX+wpW-lkW-4
     setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,wp.n,wpX+32,ry+C/2)
+    if wp.lk then
+      setNextFillColor(Lh,Ar,Ag,Ab,0.9) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
+      addText(Lh,fS,"LK",lkX+lkW/2,ry+C/2)
+    end
     setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.20) addLine(Ll,wpX,ry+C,wpX+wpW,ry+C)
-    if hv and pr then Out=json.encode({"selwp",wp.n}) end
+    if hv and pr then
+      if cx>=lkX and cx<lkX+lkW then
+        Out=json.encode({wp.lk and "unlock_wp" or "lock_wp", wp.n})
+      else Out=json.encode({"selwp",wp.n}) end
+    end
   end
   if #WP>vis then
     local sbX=wpX+wpW-10 local sbW=10 local sbY=CON_Y+C+2 local sbH=vis*C-4
@@ -1148,9 +1169,10 @@ else
 end
 -- Buttons
 local bX=nvX+5 local bW=nvW-10 local bH=26 local bG=4
-local by=SH-32-(bH+bG)*9-32
+local by=SH-32-(bH+bG)*10-32
 if Btn("★ MARK WP HERE",         bX,by,bW,bH,true)        then Out=json.encode({"mark_wp"})         end by=by+bH+bG
 if Btn("★ MARK ROUTE STOP",      bX,by,bW,bH,SelRT~="")   then Out=json.encode({"mark_stop"})        end by=by+bH+bG
+if Btn("⎘ SHOW COORDS",          bX,by,bW,bH,SelWP~="")   then Out=json.encode({"show_coords",SelWP}) end by=by+bH+bG
 if ActiveTab==ATLAS_TAB then
   if Btn("▶ NAVIGATE TO BODY",   bX,by,bW,bH,SelWP~="")   then Out=json.encode({"nav_atlas",SelWP})  end by=by+bH+bG
   by=by+bH+bG  -- skip route button slot
@@ -1159,7 +1181,20 @@ else
   if Btn("▶ NAVIGATE ROUTE",     bX,by,bW,bH,SelRT~="")   then Out=json.encode({"nav_rt",SelRT})     end by=by+bH+bG
 end
 if Btn("▶▶ NEXT STOP",           bX,by,bW,bH,nType=="route") then Out=json.encode({"next_stop"})     end by=by+bH+bG
-if Btn("◀◀ PREV STOP",           bX,by,bW,bH,nType=="route") then Out=json.encode({"prev_stop"})     end by=by+bH+bG
+do local afLabel=AutoFly and "AUTO FLY ●" or "AUTO FLY ○"
+  local hv=(cx>=bX and cx<bX+bW and cy>=by and cy<by+bH)
+  if AutoFly then
+    setNextFillColor(Lb,Ar*0.35,Ag*0.35,Ab*0.35,0.9) setNextStrokeColor(Lb,Ar,Ag,Ab,1)
+    setNextStrokeWidth(Lb,2) addBoxRounded(Lb,bX,by,bW,bH,4)
+    setNextTextAlign(Lh,AlignH_Center,AlignV_Middle) addText(Lh,fT,afLabel,bX+bW/2,by+bH/2)
+  else
+    setNextFillColor(Lb,hv and BHfr or BNfr,hv and BHfg or BNfg,hv and BHfb or BNfb,hv and 1 or 0.9)
+    setNextStrokeColor(Lb,hv and BHsr or BNsr,hv and BHsg or BNsg,hv and BHsb or BNsb,1)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,bX,by,bW,bH,4)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,afLabel,bX+bW/2,by+bH/2)
+  end
+  if hv and pr then Out=json.encode({AutoFly and "autofly_off" or "autofly_on"}) end
+end by=by+bH+bG
 if Btn("✕ CLEAR NAV",            bX,by,bW,bH,nName~="")   then Out=json.encode({"clear_nav"})        end by=by+bH+bG
 local isOrgTab=(ActiveTab>0 and ActiveTab~=ATLAS_TAB)
 if isOrgTab then
@@ -1545,7 +1580,7 @@ Palette=DeriveTheme(ThemeSlots)
 CurrentPos=GetCurrentPos()
 if screen then screen.activate() end
 UpdateChannels()
-if archbank then system.print("[NAV] archbank=OK") end
+if archbank then system.print("[NAV] HUD bank=OK (Arch+Saga)") end
 unit.setTimer("nav_tick",1)
 unit.setTimer("screen_poll",0.05)
 UpdateWaypoint()
@@ -1580,6 +1615,28 @@ event=onTimer(tag)
 args="nav_tick"
 ]]
 CurrentPos=GetCurrentPos()
+if AutoFly and NavTarget and NavTarget.t=="route" and CurrentPos then
+  local tp=ParsePos(NavTarget.c)
+  if tp then
+    local dist=CalcDist(CurrentPos,tp)
+    local inAtmo=(unit.getAtmosphereDensity() or 0)>0
+    local advance
+    if inAtmo then
+      advance = dist and dist<2000
+    else
+      local vel=construct.getVelocity()
+      local speed=vel and math.sqrt(vel[1]*vel[1]+vel[2]*vel[2]+vel[3]*vel[3]) or 0
+      advance = dist and dist<10000 and speed<50
+    end
+    if advance then
+      if NavTarget.stopIdx>=NavTarget.stopTotal then
+        AutoFly=false
+        if databank then databank.setStringValue("autofly","0") end
+        SetStatus("Route complete — Auto Fly off")
+      else NextStop() end
+    end
+  end
+end
 if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg="" end
 UpdateWaypoint()
 DrawScreen()
@@ -1626,8 +1683,40 @@ elseif act=="nav_atlas" then
       end
     end
   end
+elseif act=="show_coords" then
+  local wname=d[2]
+  if wname then
+    local wps=GetTabWPs()
+    for _,wp in ipairs(wps) do
+      if wp.n==wname then system.print("[NAV] "..wp.n.."  "..wp.c); break end
+    end
+  end
+elseif act=="lock_wp" then
+  local wname=d[2]
+  if wname then
+    local wps=GetTabWPs()
+    for _,wp in ipairs(wps) do
+      if wp.n==wname then wp.lk=true; SaveData(); SetStatus("Locked: "..wname); break end
+    end
+  end
+elseif act=="unlock_wp" then
+  local wname=d[2]
+  if wname then
+    local wps=GetTabWPs()
+    for _,wp in ipairs(wps) do
+      if wp.n==wname then wp.lk=nil; SaveData(); SetStatus("Unlocked: "..wname); break end
+    end
+  end
 elseif act=="next_stop" then NextStop()
 elseif act=="prev_stop" then PrevStop()
+elseif act=="autofly_on" then
+  AutoFly=true
+  if databank then databank.setStringValue("autofly","1") end
+  SetStatus("Auto Fly: ON")
+elseif act=="autofly_off" then
+  AutoFly=false
+  if databank then databank.setStringValue("autofly","0") end
+  SetStatus("Auto Fly: OFF")
 elseif act=="clear_nav" then ClearWaypoint();SetStatus("Nav cleared")
 elseif act=="mark_wp"   then MarkWP()
 elseif act=="mark_stop" then MarkRouteStop()
@@ -1750,16 +1839,16 @@ if message:find("<SyncWP>",1,true) then
       EnsureOrg(SyncOrgName)
       local list=OrgData[SyncOrgName].wps
       local found=false
-      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
       if not found then table.insert(list,{n=wp.n,c=wp.c}) end
     elseif SyncContext~="personal" and OrgData[SyncContext] then
       local list=OrgData[SyncContext].wps
       local found=false
-      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
       if not found then table.insert(list,{n=wp.n,c=wp.c}) end
     else
       local found=false
-      for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+      for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
       if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c}) end
     end
   end
@@ -1817,7 +1906,7 @@ if message:find("<PushWP>",1,true) then
   local ok,wp=pcall(json.decode,raw)
   if ok and wp and wp.n and wp.c then
     local found=false
-    for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
+    for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
     if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c}) end
     SaveData()
   end
@@ -1949,6 +2038,24 @@ if srQ~=nil then
   if AtlasSearch=="" then SetStatus("Atlas filter cleared")
   else SetStatus("Atlas filter: "..AtlasSearch) end
   DrawScreen(); return
+end
+
+-- lock / unlock WPNAME
+local lkN=t:match("^[Ll][Oo][Cc][Kk]%s+(.*)")
+if lkN~=nil then
+  lkN=Trim(lkN); if lkN=="" then lkN=SelWP end
+  if lkN=="" then SetStatus("Select a WP or: lock WPNAME") DrawScreen(); return end
+  local wps=GetTabWPs()
+  for _,wp in ipairs(wps) do if wp.n:lower()==lkN:lower() then wp.lk=true; SaveData(); SetStatus("Locked: "..wp.n) DrawScreen(); return end end
+  SetStatus("WP not found: "..lkN); DrawScreen(); return
+end
+local ulN=t:match("^[Uu][Nn][Ll][Oo][Cc][Kk]%s+(.*)")
+if ulN~=nil then
+  ulN=Trim(ulN); if ulN=="" then ulN=SelWP end
+  if ulN=="" then SetStatus("Select a WP or: unlock WPNAME") DrawScreen(); return end
+  local wps=GetTabWPs()
+  for _,wp in ipairs(wps) do if wp.n:lower()==ulN:lower() then wp.lk=nil; SaveData(); SetStatus("Unlocked: "..wp.n) DrawScreen(); return end end
+  SetStatus("WP not found: "..ulN); DrawScreen(); return
 end
 
 -- del

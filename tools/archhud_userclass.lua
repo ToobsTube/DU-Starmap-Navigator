@@ -71,7 +71,17 @@ function userBase.ExtraOnUpdate()
     if name == "" or not string.find(pos, "::pos") then return end
 
     -- Pass the ::pos string to Arch — sets a temporary nav target
-    if CONTROL and CONTROL.inputTextControl then
-        CONTROL.inputTextControl(pos)
+    -- Guard: don't inject while autopilot is actively flying (Arch will reject it)
+    if CONTROL and CONTROL.inputTextControl and not Autopilot and not VectorToTarget and not spaceLaunch and not IntoOrbit then
+        local ok, err = pcall(function() CONTROL.inputTextControl(pos) end)
+        if not ok then
+            p("[NAV] coord inject failed: " .. tostring(err))
+        end
+    end
+
+    -- Auto-engage autopilot if AutoFly is enabled in Navigator databank
+    local afOk, afVal = pcall(function() return _navDb.getStringValue("autofly") end)
+    if afOk and afVal == "1" and AP and AP.ToggleAutopilot then
+        AP.ToggleAutopilot()
     end
 end

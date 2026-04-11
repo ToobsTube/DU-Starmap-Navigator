@@ -5,7 +5,9 @@
       "Bash(node -e ':*)",
       "Read(//c/Users/carl_/OneDrive/Documents/Dual Scripts/ArchHUD/TTV Arch hud 2.105/**)",
       "Read(//c/Users/carl_/OneDrive/Documents/**)",
-      "Read(//c/Users/carl_/**)"
+      "Read(//c/Users/carl_/**)",
+      "Bash(powershell -Command \"Expand-Archive -Path 'ArchHUD-2.105.zip' -DestinationPath 'ArchHUD-2.105' -Force\")",
+      "Bash(xargs grep:*)"
     ]
   }
 }
