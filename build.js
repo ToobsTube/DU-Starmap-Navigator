@@ -14,7 +14,7 @@ const CONFIGS = {
     slots: {
        '0': 'screen',   '1': 'databank',
        '2': 'receiver', '3': 'emitter',
-       '4': 'archbank',
+       '4': 'navdatabank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
@@ -24,7 +24,7 @@ const CONFIGS = {
     slots: {
        '0': 'databank',
        '1': 'receiver', '2': 'emitter',
-       '3': 'screen',   '4': 'archbank',
+       '3': 'screen',   '4': 'navdatabank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }

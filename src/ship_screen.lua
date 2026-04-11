@@ -559,11 +559,11 @@ function SendAutopilot(name, coords)
   if not coords or coords=="" then return end
   -- HUD databank integration: write to shared databank (slot 4, optional)
   -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest
-  if archbank then
+  if navdatabank then
     local dest = (name or "Navigator").."|"..coords
-    archbank.setStringValue("nav_arch_dest", dest)
-    archbank.setStringValue("nav_saga_dest", dest)
-    archbank.setStringValue("autofly", AutoFly and "1" or "0")
+    navdatabank.setStringValue("nav_arch_dest", dest)
+    navdatabank.setStringValue("nav_saga_dest", dest)
+    navdatabank.setStringValue("autofly", AutoFly and "1" or "0")
     system.print("[NAV] sent to HUD bank: "..(name or "Navigator"))
   end
 end
@@ -1580,7 +1580,7 @@ Palette=DeriveTheme(ThemeSlots)
 CurrentPos=GetCurrentPos()
 if screen then screen.activate() end
 UpdateChannels()
-if archbank then system.print("[NAV] HUD bank=OK (Arch+Saga)") end
+if navdatabank then system.print("[NAV] HUD bank=OK (Arch+Saga)") end
 unit.setTimer("nav_tick",1)
 unit.setTimer("screen_poll",0.05)
 UpdateWaypoint()

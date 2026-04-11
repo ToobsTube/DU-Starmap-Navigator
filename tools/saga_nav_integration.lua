@@ -18,7 +18,7 @@
     autopilot when autofly = "1".
 
     ─── SETUP ──────────────────────────────────────────────────────────────────
-    1.  Link a databank to both your Navigator PB (slot 4 = archbank) AND your
+    1.  Link a databank to both your Navigator PB (slot 4 = navdatabank) AND your
         Saga control seat.
     2.  Open SagaAP_src/src/events/system_update.lua
     3.  Add the TWO BLOCKS below to the file as described.
