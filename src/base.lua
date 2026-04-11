@@ -886,7 +886,7 @@ event=onStart()
 args=
 ]]
 
-local VERSION="v2.2.0"
+local VERSION="v2.3.0"
 BaseChannel = "NavBase" --export: Channel ships use to reach this base
 
 WaypointList = {}

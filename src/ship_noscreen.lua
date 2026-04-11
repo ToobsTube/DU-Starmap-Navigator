@@ -570,7 +570,7 @@ event=onStart()
 args=
 ]]
 
-local VERSION="v2.0.0"
+local VERSION="v2.1.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 CalcSpeed   =30000    --export: Time Calc max speed in space in km/h (e.g. 30000)
