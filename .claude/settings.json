@@ -7,7 +7,10 @@
       "Read(//c/Users/carl_/OneDrive/Documents/**)",
       "Read(//c/Users/carl_/**)",
       "Bash(powershell -Command \"Expand-Archive -Path 'ArchHUD-2.105.zip' -DestinationPath 'ArchHUD-2.105' -Force\")",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(sed -i 's/v2\\\\.0\\\\.0/v2.1.0/g; s/v2\\\\.0 ►/v2.1 ►/g; s/NAVIGATOR v2\\\\.0  CHAT/NAVIGATOR v2.1  CHAT/g; s/SCREEN VERSION v2\\\\.0\\\\.0/SCREEN VERSION v2.1.0/g' src/ship_screen.lua)",
+      "Bash(sed -i 's/v2\\\\.0\\\\.0/v2.1.0/g; s/NAVIGATOR v2\\\\.0/NAVIGATOR v2.1/g; s/NO SCREEN VERSION v2\\\\.0\\\\.0/NO SCREEN VERSION v2.1.0/g' src/ship_noscreen.lua)",
+      "Bash(sed -i \"s/VERSION    = 'v2\\\\.0'/VERSION    = 'v2.1'/g; s/v2\\\\.0\\\\.txt/v2.1.txt/g\" build.js)"
     ]
   }
 }
