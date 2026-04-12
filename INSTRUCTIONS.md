@@ -268,6 +268,9 @@ Type these in Lua chat while the PB is running:
 | `firstsync CHANNEL` | First-time sync with a new org (e.g. `firstsync NavOrg`) |
 | `push` | Push to personal base |
 | `orgpush` | Push to the org on the current tab |
+| `importarch` | Import all Arch HUD SavedLocations as personal WPs |
+| `importsaga` | Import all SAGA routes — single-stop as WPs, multi-stop as routes |
+| `navdbkeys` | Print all navdatabank key names to Lua chat (diagnostic) |
 | `help` | Show all commands in Lua chat |
 
 ---
@@ -334,6 +337,9 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | `status` | Show current nav target and distance |
 | `list` | List all waypoints |
 | `routes` | List all routes |
+| `importarch` | Import all Arch HUD SavedLocations as personal WPs |
+| `importsaga` | Import all SAGA routes — single-stop as WPs, multi-stop as routes |
+| `navdbkeys` | Print all navdatabank key names to Lua chat (diagnostic) |
 | `help` | Show all commands in Lua chat |
 
 ---
@@ -389,6 +395,41 @@ You will see these messages in Lua chat:
 - `[NAV] sent to HUD bank: NAME` — each time a waypoint is sent
 - `[NAV] Target: NAME` — from Saga confirming it received the target
 
+---
+
+## Importing from Arch HUD or SAGA
+
+If you're already using Arch HUD or SAGA and have saved locations/routes, you can import them directly into the Navigator with one command. No manual re-entry needed.
+
+### Requirements
+
+Both HUDs must share a databank with the Navigator PB (the `navdatabank` slot). If you already have Arch or SAGA integration set up, this databank is already linked — just run the command.
+
+### Importing from Arch HUD
+
+Arch stores saved locations in a key called `SavedLocations` in its databank.
+
+```
+importarch
+```
+
+All saved locations come in as personal waypoints, using the name and world coordinates from Arch.
+
+### Importing from SAGA
+
+SAGA stores routes in a key called `SagaRoutes` in its databank.
+
+```
+importsaga
+```
+
+- **Single-stop routes** → imported as personal **waypoints**
+- **Multi-stop routes** → imported as personal **routes** with all stops and stop names preserved
+
+### Safe to re-run
+
+Both commands are safe to run multiple times. Existing entries with matching names are updated rather than duplicated.
+
 ### Note on switching between Arch and Saga
 
 The same databank works for both HUDs — no link changes needed when switching. The Navigator writes both `nav_arch_dest` and `nav_saga_dest` keys every time. Whichever HUD is running will pick up its own key and ignore the other.
@@ -423,6 +464,40 @@ The calculator uses real burn physics: acceleration burn at the start, cruise at
 Travel time shows:
 - **Screen version:** Next to the distance in the Navigation panel (e.g. `257 su  ▸  5h 23m`)
 - **No screen version:** In the TIME CALC section, listed for every waypoint
+
+---
+
+## Utility Tools
+
+The `dist/tools/` folder contains standalone programming board scripts for maintenance tasks. Import each `.txt` file into a separate PB.
+
+### Databank_Copy
+
+Backs up or restores a databank by copying all keys to another databank. Useful before testing imports or making bulk changes.
+
+**Setup:** Link two databanks to any slots on the PB. The tool auto-detects them.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `copy` | Copy DB1 → DB2 (backup) |
+| `restore` | Copy DB2 → DB1 (restore) |
+| `yes` | Confirm overwrite if destination already has data |
+| `cancel` | Cancel a pending overwrite |
+
+> **Tip:** To get an empty backup databank, either use the Wipe_Databanks tool first, or take the databank into your inventory and right-click → Clear.
+
+### Databank_Inspector
+
+Displays all keys and values stored in a linked databank on a screen. Useful for diagnosing what data a HUD is storing.
+
+**Setup:** Link a screen and the databank you want to inspect.
+
+**Commands:** Type a key name in Lua chat to filter. Type `clear` to reset. Type `next`/`prev` to page through results.
+
+### Wipe_Databanks
+
+Clears all data from up to two linked databanks. Link databanks to slots named `databank1` and `databank2`. Activating the PB wipes them immediately — use with care.
 
 ---
 
