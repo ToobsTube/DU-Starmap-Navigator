@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR SHIP - NO SCREEN VERSION v2.0.0
+-- NAVIGATOR SHIP - NO SCREEN VERSION v2.1.0
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS (connect in this order):
@@ -1679,7 +1679,7 @@ local t=Trim(text); local lo=t:lower()
 
 if lo=="help" then
   system.print("═══════════════════════════════")
-  system.print("  NAVIGATOR v2.0  (No Screen)")
+  system.print("  NAVIGATOR v2.1  (No Screen)")
   system.print("═══════════════════════════════")
   system.print("add NAME [::pos{..}]   save WP")
   system.print("del NAME               delete WP")
@@ -1697,6 +1697,8 @@ if lo=="help" then
   system.print("push / orgpush         push to base")
   system.print("firstsync CHANNEL      first-time org sync, e.g: firstsync NavOrg")
   system.print("org NAME               switch active context")
+  system.print("importarch             import Arch SavedLocations as WPs from navdatabank")
+  system.print("importsaga             import all SAGA routes from navdatabank")
   system.print("search NAME            filter atlas by name")
   system.print("search                 clear atlas filter")
   system.print("coords NAME            print WP coords to console")
@@ -1861,6 +1863,15 @@ if coordN~=nil then
   SetStatus("WP not found: "..coordN); return
 end
 
+if lo=="navdbkeys" then
+  if not navdatabank then system.print("[NAV] navdatabank not linked") return end
+  local raw=navdatabank.getKeyList()
+  local list=type(raw)=="table" and raw or {}
+  system.print("[NAV] navdatabank keys ("..#list.."):")
+  for _,k in ipairs(list) do system.print("  "..tostring(k)) end
+  return
+end
+
 if lo=="list" then
   system.print("─── PERSONAL WPs ("..#PersonalWPs..") ───")
   for i,wp in ipairs(PersonalWPs) do system.print(i..".  "..wp.n.."  "..wp.c) end
@@ -1886,6 +1897,78 @@ if lo=="routes" then
       for j,s in ipairs(r.pts) do system.print("    "..j..".  "..(s.label or s.c)) end
     end
   end
+  return
+end
+
+-- importarch
+if lo=="importarch" then
+  if not navdatabank then SetStatus("navdatabank not linked — share the Arch databank with the Navigator",8); return end
+  local raw=navdatabank.getStringValue("SavedLocations")
+  if not raw or raw=="" then SetStatus("No SavedLocations key found in navdatabank",8); return end
+  local ok,locs=pcall(json.decode,raw)
+  if not ok or type(locs)~="table" then SetStatus("Failed to parse SavedLocations",8); return end
+  local imported=0
+  for _,loc in ipairs(locs) do
+    local name=loc.name or loc.n
+    local p=loc.position
+    if name and name~="" and p and p.x and p.y and p.z then
+      local posStr=string.format("::pos{0,0,%.4f,%.4f,%.4f}",p.x,p.y,p.z)
+      local found=false
+      for i,wp in ipairs(PersonalWPs) do
+        if wp.n:lower()==name:lower() then PersonalWPs[i].c=posStr; found=true; break end
+      end
+      if not found then table.insert(PersonalWPs,{n=name,c=posStr}) end
+      imported=imported+1
+    end
+  end
+  if imported>0 then
+    table.sort(PersonalWPs,function(a,b) return a.n:lower()<b.n:lower() end)
+    SaveData(); SetStatus("Imported "..imported.." WPs from Arch")
+  else SetStatus("No locations found in SavedLocations") end
+  return
+end
+
+-- importsaga
+if lo=="importsaga" then
+  if not navdatabank then SetStatus("navdatabank not linked — share the SAGA databank with the Navigator",8); return end
+  local raw=navdatabank.getStringValue("SagaRoutes")
+  if not raw or raw=="" then SetStatus("No SagaRoutes key found in navdatabank",8); return end
+  local fn=load("return "..raw)
+  if not fn then SetStatus("Could not parse SagaRoutes data",8); return end
+  local ok,sagaRoutes=pcall(fn)
+  if not ok or type(sagaRoutes)~="table" then SetStatus("Failed to read SagaRoutes",8); return end
+  local imported=0
+  for _,r in ipairs(sagaRoutes) do
+    local name=r.n or r.ln or ("Import "..imported+1)
+    if r.p and #r.p>0 then
+      local pts={}
+      for _,stop in ipairs(r.p) do
+        if stop.c and stop.c.x and stop.c.y and stop.c.z then
+          local posStr=string.format("::pos{0,0,%.4f,%.4f,%.4f}",stop.c.x,stop.c.y,stop.c.z)
+          table.insert(pts,{c=posStr,label=(stop.n~="" and stop.n or nil)})
+        end
+      end
+      if #pts==1 then
+        local found=false
+        for i,wp in ipairs(PersonalWPs) do
+          if wp.n:lower()==name:lower() then PersonalWPs[i].c=pts[1].c; found=true; break end
+        end
+        if not found then table.insert(PersonalWPs,{n=name,c=pts[1].c}) end
+        imported=imported+1
+      elseif #pts>1 then
+        local found=false
+        for i,er in ipairs(PersonalRoutes) do
+          if er.n:lower()==name:lower() then PersonalRoutes[i]={n=name,pts=pts}; found=true; break end
+        end
+        if not found then table.insert(PersonalRoutes,{n=name,pts=pts}) end
+        imported=imported+1
+      end
+    end
+  end
+  if imported>0 then
+    table.sort(PersonalRoutes,function(a,b) return a.n:lower()<b.n:lower() end)
+    SaveData(); SetStatus("Imported "..imported.." routes from SAGA")
+  else SetStatus("No routes found in SagaRoutes") end
   return
 end
 

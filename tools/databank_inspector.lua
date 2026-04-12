@@ -18,11 +18,15 @@ slot=-5
 event=onStart()
 ]]
 ScreenScript=[[
-local json=require('dkjson')
-local input=json.decode(getInput()) or {}
-local KEYS   = input.keys   or {}
-local FILTER = input.filter or ""
-local PAGE   = input.page   or 1
+local raw=getInput() or ""
+local lines={}; for ln in raw:gmatch("[^\n]+") do table.insert(lines,ln) end
+local FILTER=(lines[1] or "F:"):sub(3)
+local PAGE=tonumber((lines[2] or "P:1"):sub(3)) or 1
+local KEYS={}
+for i=3,#lines do
+  local k,t,v=lines[i]:match("^([^|]*)|([^|]*)|?(.*)")
+  if k then table.insert(KEYS,{k=k,t=t,v=v or ""}) end
+end
 
 local SW,SH=getResolution()
 local C=28
@@ -87,7 +91,7 @@ for i=startI,endI do
   addText(Lt,fS,tc,KW-13,ry+C/2)
   -- Value
   local val=entry.v or ""
-  if #val>80 then val=val:sub(1,77).."..." end
+  if #val>200 then val=val:sub(1,197).."..." end
   setNextFillColor(Lt,0.80,0.80,0.80,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
   addText(Lt,fS,val,KW+8,ry+C/2)
   -- row divider
@@ -119,28 +123,38 @@ Keys    = {}
 
 function Collect()
   Keys={}
-  if not databank then return end
-  -- Collect all string keys
-  local sk=databank.getKeyList()
-  if type(sk)=="string" then
-    for k in sk:gmatch("[^,]+") do
-      local v=databank.getStringValue(k)
-      if Filter=="" or k:lower():find(Filter:lower(),1,true) then
-        table.insert(Keys,{k=k,v=tostring(v),t="string"})
-      end
+  if not databank then system.print("[INSP] ERROR: databank slot is nil — link a databank to this PB") return end
+  local raw=databank.getKeyList()
+  local list
+  if type(raw)=="table" then list=raw
+  elseif type(raw)=="string" then list=json.decode(raw) or {}
+  else list={} end
+  system.print("[INSP] getKeyList type:"..type(raw).." count:"..(type(list)=="table" and #list or 0))
+  for _,k in ipairs(list) do
+    local match=Filter=="" or tostring(k):lower():find(Filter:lower(),1,true)
+    if match then
+      local sv=databank.getStringValue(k)
+      local iv=databank.getIntValue(k)
+      local fv=databank.getFloatValue(k)
+      local v,t
+      if sv~=nil and sv~="" then v=sv; t="string"
+      elseif iv~=nil and iv~=0 then v=tostring(iv); t="int"
+      elseif fv~=nil and fv~=0 then v=tostring(fv); t="float"
+      else v=sv or ""; t="string" end
+      table.insert(Keys,{k=tostring(k),v=v,t=t})
     end
   end
-  -- Sort keys alphabetically
   table.sort(Keys,function(a,b) return a.k:lower()<b.k:lower() end)
 end
 
 function PushScreen()
   if not screen then return end
-  local data={}
-  data.keys=Keys
-  data.filter=Filter
-  data.page=Page
-  screen.setInput(require('dkjson').encode(data))
+  local lines={"F:"..Filter,"P:"..Page}
+  for _,e in ipairs(Keys) do
+    local v=(e.v or ""):gsub("|","¦"):sub(1,500)
+    table.insert(lines,e.k.."|"..(e.t or "?").."|"..v)
+  end
+  screen.setScriptInput(table.concat(lines,"\n"))
   screen.setRenderScript(ScreenScript)
 end
 

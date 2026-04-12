@@ -10,7 +10,7 @@ const path = require('path');
 
 const CONFIGS = {
   ship_screen: {
-    output: 'Navigator_Ship_Screen_v2.0.txt',
+    output: 'Navigator_Ship_Screen_v2.1.txt',
     slots: {
        '0': 'screen',   '1': 'databank',
        '2': 'receiver', '3': 'emitter',
@@ -20,7 +20,7 @@ const CONFIGS = {
     }
   },
   ship_noscreen: {
-    output: 'Navigator_Ship_NoScreen_v2.0.txt',
+    output: 'Navigator_Ship_NoScreen_v2.1.txt',
     slots: {
        '0': 'databank',
        '1': 'receiver', '2': 'emitter',
@@ -30,7 +30,7 @@ const CONFIGS = {
     }
   },
   base: {
-    output: 'Navigator_Base_v2.0.txt',
+    output: 'Navigator_Base_v2.1.txt',
     slots: {
        '0': 'screen',   '1': 'databank',
        '2': 'receiver', '3': 'emitter',
@@ -39,7 +39,7 @@ const CONFIGS = {
     }
   },
   orgbase_admin: {
-    output: 'Navigator_OrgBase_Admin_v2.0.txt',
+    output: 'Navigator_OrgBase_Admin_v2.1.txt',
     slots: {
        '0': 'screen',   '1': 'databank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
@@ -47,7 +47,7 @@ const CONFIGS = {
     }
   },
   orgbase_sync: {
-    output: 'Navigator_OrgBase_Sync_v2.0.txt',
+    output: 'Navigator_OrgBase_Sync_v2.1.txt',
     slots: {
        '0': 'screen',   '1': 'databank',
        '2': 'receiver', '3': 'emitter',
@@ -154,6 +154,14 @@ const TOOLS = {
       '-4': 'system', '-5': 'library',
     }
   },
+  databank_copy: {
+    src: 'tools/databank_copy.lua',
+    output: 'tools/Databank_Copy.txt',
+    slots: {
+      '-1': 'unit', '-2': 'construct', '-3': 'player',
+      '-4': 'system', '-5': 'library',
+    }
+  },
 };
 
 console.log('=== DU Navigator Build ===');
@@ -183,7 +191,7 @@ console.log('\n=== Package ===');
 const { execSync } = require('child_process');
 const os = require('os');
 
-const VERSION    = 'v2.0';
+const VERSION    = 'v2.1';
 const STAGE_DIR  = path.join(os.tmpdir(), 'nav_release');
 const ZIP_OUT    = path.resolve(`dist/Navigator_${VERSION}.zip`);
 
