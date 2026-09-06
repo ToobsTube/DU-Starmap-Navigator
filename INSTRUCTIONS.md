@@ -89,7 +89,7 @@ The console line shows each linked element's detected name in parentheses when a
 |-----------|---------|-------------|
 | `CustomAtlas` | `atlas` | Atlas file to load. Leave as default unless you have a custom atlas in `autoconf/custom/`. |
 | `BaseChannel` | `NavBase` | Channel name for your personal base. Must match your base PB's channel. |
-| `CalcSpeed` | `30000` | Your max speed in space in km/h for travel time calculations. |
+| `CalcSpeed` | `0` | Your cruise speed in space in km/h for travel time calculations. `0` auto-detects your ship's actual max speed (`construct.getMaxSpeed()`) every time the PB loads. Set a specific value to plan at a slower speed instead — e.g. to save fuel, or to see how long a trip takes if you're running low and can't push max speed. |
 | `CalcThrust` | `0` | Your ship's total thrust in kN — read this directly from your ship's stats screen. Acceleration is calculated automatically using your ship's current mass. Leave at `0` to use `CalcAccel` instead. |
 | `CalcBrake` | `0` | Your ship's total brake force in kN from your ship's stats screen. When set, the script decelerates using brakes rather than a flip-and-burn. Leave at `0` to let the script read brake force automatically from the construct; if that also fails it falls back to using thrust for deceleration. |
 | `CalcAccel` | `5` | Fallback acceleration in m/s² — only used if `CalcThrust` is `0`. |
@@ -497,7 +497,7 @@ See [THEME_GUIDE.md](THEME_GUIDE.md) for a full description of what each color s
 
 Set these export parameters on your ship PB:
 
-- **CalcSpeed** — your max speed in space in km/h. Check your HUD at top speed. Typical: `20000`–`50000`.
+- **CalcSpeed** — your cruise speed in space in km/h. Leave at `0` (default) to auto-detect your ship's actual max speed automatically — the TIME CALC screen/panel shows `(auto)` next to the speed when this is happening. Set a specific value instead to plan at a slower speed on purpose, e.g. to save fuel on a long trip or to check timing when you're running low and can't push max speed.
 - **CalcThrust** — your ship's total thrust in kN, shown on the ship stats screen. The script divides this by your current mass automatically, so the calculation stays accurate as your cargo changes. Recommended over `CalcAccel`.
 - **CalcBrake** — your ship's total brake force in kN, also shown on the ship stats screen. When provided, the deceleration phase uses brakes rather than a flip-and-burn, giving a more accurate time estimate. If left at `0` the script tries to read brake force directly from the construct automatically. If that fails too it falls back to using thrust for deceleration.
 - **CalcAccel** — fallback acceleration in m/s². Only used if `CalcThrust` is left at `0`.

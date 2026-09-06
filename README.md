@@ -12,7 +12,7 @@ A waypoint and route navigation system for **Dual Universe** built on Programmin
 - **Personal Base Sync** — Push and pull waypoints between your ship and your base over emitter/receiver.
 - **Org Sharing** — Org bases serve waypoints to any ship that syncs. Ships add org connections once with `firstsync` and refresh any time after that.
 - **Multi-Org Support** — One ship can be connected to any number of org bases, each with its own tab.
-- **Travel Time Calculator** — Uses real burn physics (asymmetric accel/brake profile). Set thrust and brake force in kN from your ship stats — mass is read automatically so estimates stay accurate as cargo changes.
+- **Travel Time Calculator** — Uses real burn physics (asymmetric accel/brake profile). Set thrust and brake force in kN from your ship stats — mass is read automatically so estimates stay accurate as cargo changes. Cruise speed is auto-detected from your ship's actual max speed by default; set it manually to plan a slower trip on purpose (e.g. to save fuel).
 - **Theme Editor** — Built-in color picker on every PB. Eight color slots control the full UI palette. Themes are saved to the databank and survive restarts. A ship can also `theme push` its theme straight to its base's databank, and any ship that later `sync`s pulls it back down as a loadable profile — no copy/pasting an export string through Lua chat required.
 - **Atlas** — All planets, moons, and space stations built in. Navigate to any body directly from the UI.
 - **Arch HUD Integration** — Sends waypoints directly to Arch HUD as temporary nav targets via a shared databank. No extra hardware needed.

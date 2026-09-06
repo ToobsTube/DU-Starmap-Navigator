@@ -37,9 +37,20 @@ function FormatTime(s)
     return string.format("%dm %02ds",m,sc)
   end
 end
+-- CalcSpeed=0 (default) auto-detects the ship's real max speed via
+-- construct.getMaxSpeed() (already in m/s, no conversion needed). Set
+-- CalcSpeed to a specific km/h value to plan at a slower cruise speed
+-- instead — e.g. to save fuel, or to see how long a trip takes if you're
+-- running low and can't push max speed.
+function GetCruiseSpeedMS()
+  if CalcSpeed and CalcSpeed>0 then return CalcSpeed/3.6,false end
+  local ok,v=pcall(function() return construct.getMaxSpeed() end)
+  if ok and v and v>0 then return v,true end
+  return 30000/3.6,false
+end
 function CalcTravelTime(dist)
   if not dist or dist<=0 then return nil end
-  local V=(CalcSpeed or 30000)/3.6   -- km/h → m/s
+  local V=GetCruiseSpeedMS()
   local mass=construct and construct.getMass() or 0
   local Aa=CalcThrust and mass>0 and (CalcThrust*1000/mass) or (CalcAccel or 5)
   local brakeN=construct and construct.getMaxBrake and construct.getMaxBrake() or 0
@@ -763,7 +774,7 @@ end
 local VERSION="v2.2.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
-CalcSpeed   =30000    --export: Time Calc max speed in space in km/h (e.g. 30000)
+CalcSpeed   =0        --export: Time Calc max speed in space in km/h. 0 = auto-detect your ship's actual max speed. Set a value to plan at a slower cruise speed instead (e.g. to save fuel).
 CalcThrust  =0        --export: Time Calc total thrust in kN from ship stats (0 = use CalcAccel fallback)
 CalcBrake   =0        --export: Time Calc total brake force in kN from ship stats (0 = auto-detect, fallback to thrust)
 CalcAccel   =5        --export: Time Calc fallback acceleration in m/s2 — ignored if CalcThrust is set
@@ -1211,7 +1222,7 @@ function GetSubItems()
     end
 
   else -- TIME CALC
-    local V=(CalcSpeed or 30000)/3.6
+    local V,VIsAuto=GetCruiseSpeedMS()
     local mass=construct and construct.getMass() or 0
     local Aa=CalcThrust and mass>0 and (CalcThrust*1000/mass) or (CalcAccel or 5)
     local brakeN=construct and construct.getMaxBrake and construct.getMaxBrake() or 0
@@ -1224,7 +1235,8 @@ function GetSubItems()
     else
       dynLabel=string.format("Accel: %g m/s\xc2\xb2",(CalcAccel or 5))
     end
-    table.insert(items,{type="info",label=string.format("Speed: %g km/h  |  %s",(CalcSpeed or 30000),dynLabel)})
+    table.insert(items,{type="info",label=string.format("Speed: %g km/h%s  |  %s",
+      V*3.6,(VIsAuto and " (auto)" or ""),dynLabel)})
     -- Current target
     if NavTarget and NavTarget.c then
       local tp=ParsePos(NavTarget.c); local cp=GetCurrentPos()
