@@ -1,10 +1,11 @@
 -- ================================================================
--- NAVIGATOR ORG BASE - ADMIN PB v2.0.0
+-- NAVIGATOR ORG BASE - ADMIN PB v2.2.0
 -- Dual Universe Navigation System
 --
--- SLOT CONNECTIONS (connect in this order):
---   Slot 0: screen     (Screen Unit)
---   Slot 1: databank   (SHARED databank — same one orgbase_sync uses)
+-- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
+--   Required: Screen Unit, Databank (SHARED databank — same one orgbase_sync uses)
+-- Check the Lua console after activating for a "[ORG-ADMIN] slot1=..." line
+-- confirming what was detected as what.
 --
 -- RDMS: restrict "use element" to admins only.
 -- This PB is the ONLY one that writes to the shared databank.
@@ -219,7 +220,76 @@ event=onStart()
 args=
 ]]
 
-local VERSION="v2.0.0"
+-- ── Slot auto-detect ────────────────────────────────────────────
+-- Link Screen and Databank to ANY of the PB's slots, in any order — same
+-- technique as the ship/base PBs (see src/ship_noscreen.lua for the full
+-- write-up). Check the Lua console on startup ("[ORG-ADMIN] slot1=...") to
+-- confirm what got detected. No Receiver/Emitter here — the Admin PB does
+-- not talk to ships directly, that's orgbase_sync.lua's job.
+do
+  -- Primary check: DU's own type introspection. getElementClass() (confirmed
+  -- present on a "Modern Screen xs" via a live field dump, 2026-09-06)
+  -- logs a deprecation warning in-game telling scripts to use getClass()
+  -- instead — try that first, fall back to the deprecated name for older
+  -- game versions that might not have getClass() yet. Either way the
+  -- returned string gets a lowercase substring match, robust to exact
+  -- naming we haven't seen across other screen/databank variants.
+  local function classOf(s)
+    local ok,cls=pcall(function() return s.getClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    ok,cls=pcall(function() return s.getElementClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    return nil
+  end
+  local function probe(s)
+    if not s then return nil end
+    local cls=classOf(s)
+    if cls then
+      if cls:find("screen")   then return "screen" end
+      if cls:find("databank") then return "databank" end
+    end
+    -- Fallback for class names this doesn't recognize, or if
+    -- getElementClass() itself isn't available on some element. Previously
+    -- getRenderScript()/getScriptInput() were the primary screen check —
+    -- confirmed via that field dump that NEITHER getter actually exists on
+    -- a "Modern Screen xs" (only the setter halves do), which is why the
+    -- old capability-probe silently misclassified a real screen as
+    -- "unrecognized". getScriptOutput() (the real read counterpart DU
+    -- screens expose) is checked first here as the better fallback.
+    if pcall(function() return s.getScriptOutput() end)
+      or pcall(function() return s.getRenderScript() end)
+      or pcall(function() return s.getScriptInput() end) then return "screen" end
+    if pcall(function() return s.getKeyList() end) then return "databank" end
+    return nil
+  end
+  -- Best-effort: read the element's in-game display name (works if you've
+  -- renamed it via right-click -> Rename). Wrapped in pcall so if this isn't
+  -- the right method on some element type, it just silently returns nil.
+  local function tryName(s)
+    local ok,n=pcall(function() return s.getName() end)
+    if ok and n and n~="" then return n end
+    return nil
+  end
+  -- Literal slotN references only — DU's sandbox does not support building
+  -- these names dynamically (e.g. _ENV["slot"..i]) and silently fails.
+  local raw={slot1,slot2,slot3,slot4,slot5,slot6,slot7,slot8,slot9,slot10}
+  for i,s in ipairs(raw) do
+    local kind=probe(s)
+    if kind=="databank" and not databank then databank=s
+    elseif kind=="screen" and not screen then screen=s
+    end
+  end
+  local dbg={}
+  for i,s in ipairs(raw) do
+    local role=(s==databank and "databank") or (s==screen and "screen") or "unrecognized"
+    local nm=tryName(s)
+    local cls=(role=="unrecognized") and classOf(s) or nil
+    table.insert(dbg,"slot"..i.."="..role..(nm and ("("..nm..")") or "")..(cls and ("[class:"..cls.."]") or ""))
+  end
+  system.print("[ORG-ADMIN] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
+end
+
+local VERSION="v2.2.0"
 OrgChannel  ="NavOrg"      --export: Set once — saved to databank and read by Sync PB
 OrgName     ="MyOrg"       --export: Display name for this org (shown on sync PB screen)
 
@@ -228,8 +298,11 @@ RouteList    = {}
 SelWP        = ""
 SelRoute     = ""
 SelStop      = 0
-ScrollWP     = 0
-ScrollRT     = 0
+ActiveView   = "wps"   -- "wps"|"routes"|"stops"|"pending"
+ViewScroll   = 0
+PendingAction= ""
+PendingTarget= ""
+pending_ack  = false
 StatusMsg    = ""; StatusExpiry=0
 LastScreenOut= ""
 
@@ -405,66 +478,96 @@ function RefreshTheme()
   Palette=DeriveTheme(ThemeSlots)
 end
 
-function DrawScreen()
+local PAGE=16
+
+function PushState()
   if not screen then return end
-  local builder=ShowThemePicker and BuildPickerScript or BuildScreenScript
-  local ok,result=pcall(builder)
+  if ShowThemePicker then
+    local ok,result=pcall(BuildPickerScript)
+    if not ok then system.print("[ORG-ADMIN] picker error: "..tostring(result)); return end
+    screen.setRenderScript(result); return
+  end
+  LoadPending()
+  local pendingList=GetPendingList()
+  local pCount=#pendingList
+  local inp
+  if ActiveView=="wps" then
+    local sc=math.max(0,math.min(ViewScroll,math.max(0,#WaypointList-PAGE)))
+    local items={}
+    for i=sc+1,math.min(sc+PAGE,#WaypointList) do
+      table.insert(items,{n=WaypointList[i].n,hc=(WaypointList[i].c~="")})
+    end
+    local sel_c=""
+    if SelWP~="" then
+      for _,wp in ipairs(WaypointList) do if wp.n:lower()==SelWP:lower() then sel_c=wp.c or ""; break end end
+    end
+    inp={view="wps",items=items,total=#WaypointList,scroll=sc,
+         sel=SelWP,sel_c=sel_c,pending=PendingAction,pcount=pCount,
+         orgname=OrgName,orgch=OrgChannel,status=StatusMsg,ack=pending_ack}
+  elseif ActiveView=="routes" then
+    local sc=math.max(0,math.min(ViewScroll,math.max(0,#RouteList-PAGE)))
+    local items={}
+    for i=sc+1,math.min(sc+PAGE,#RouteList) do
+      table.insert(items,{n=RouteList[i].n,pc=#(RouteList[i].pts or {})})
+    end
+    inp={view="routes",items=items,total=#RouteList,scroll=sc,
+         sel=SelRoute,pending=PendingAction,pcount=pCount,
+         orgname=OrgName,orgch=OrgChannel,status=StatusMsg,ack=pending_ack}
+  elseif ActiveView=="stops" then
+    local stops={}
+    for _,r in ipairs(RouteList) do if r.n==SelRoute then stops=r.pts;break end end
+    local sc=math.max(0,math.min(ViewScroll,math.max(0,#stops-PAGE)))
+    local items={}
+    for i=sc+1,math.min(sc+PAGE,#stops) do
+      table.insert(items,{c=stops[i].c,label=stops[i].label or ""})
+    end
+    inp={view="stops",rt=SelRoute,items=items,total=#stops,scroll=sc,
+         sel=SelStop,pending=PendingAction,pcount=pCount,
+         orgname=OrgName,orgch=OrgChannel,status=StatusMsg,ack=pending_ack}
+  else -- pending
+    local items={}
+    for _,e in ipairs(pendingList) do
+      local it=e.item or {}; local d=it.data or {}
+      local from=it.pname and it.pname~="" and it.pname or (it.from or "?")
+      table.insert(items,{t=e.type,n=d.n or "?",from=from})
+    end
+    inp={view="pending",items=items,total=#items,scroll=0,
+         sel=SelPending,pcount=pCount,
+         orgname=OrgName,orgch=OrgChannel,status=StatusMsg,ack=pending_ack}
+  end
+  pending_ack=false
+  local enc=json.encode(inp)
+  if #enc>1024 then inp.items={}; enc=json.encode(inp) end
+  screen.setScriptInput(enc)
+  local ok,result=pcall(BuildScreenScript)
   if not ok then system.print("[ORG-ADMIN] render error: "..tostring(result)); return end
   screen.setRenderScript(result)
 end
 
+-- Legacy alias used by a few call sites
+function DrawScreen() PushState() end
+
 function BuildScreenScript()
-  local selRoutePts={}
-  if SelRoute~="" then
-    for _,r in ipairs(RouteList) do if r.n==SelRoute then selRoutePts=r.pts;break end end
-  end
-  LoadPending()
-  local pendingList=GetPendingList()
-
-  -- Build Lua table literals — no dkjson needed in render script
-  local function luaWPList(list)
-    local t={}
-    for _,v in ipairs(list) do table.insert(t,string.format("{n=%q,c=%q}",v.n,v.c)) end
-    return "{"..table.concat(t,",").."}"
-  end
-  local function luaStopList(list)
-    local t={}
-    for _,p in ipairs(list) do
-      table.insert(t,string.format("{c=%q,label=%q}",p.c,p.label or p.c:sub(1,24)))
-    end
-    return "{"..table.concat(t,",").."}"
-  end
-  local function luaRouteList(list)
-    local t={}
-    for _,r in ipairs(list) do
-      local dummy={}
-      for i=1,#(r.pts or {}) do dummy[i]="{}" end
-      table.insert(t,string.format("{n=%q,pts={%s}}",r.n,table.concat(dummy,",")))
-    end
-    return "{"..table.concat(t,",").."}"
-  end
-  local function luaPendingList(list)
-    local t={}
-    for _,e in ipairs(list) do
-      local it=e.item or {}
-      local d=it.data or {}
-      local label=it.pname and it.pname~="" and it.pname or (it.from or "?")
-      table.insert(t,string.format("{type=%q,n=%q,from=%q}",e.type,d.n or "?",label))
-    end
-    return "{"..table.concat(t,",").."}"
-  end
-
-  local wpLit  = luaWPList(WaypointList)
-  local rtLit  = luaRouteList(RouteList)
-  local ptLit  = luaStopList(selRoutePts)
-  local pdLit  = luaPendingList(pendingList)
-
-  local S={}
   local P=Palette
+  local S={}
 
   S[1]=string.format([[
-local C=32 local SW,SH=getResolution()
--- Theme palette (pre-derived)
+local json=require('dkjson')
+local d=json.decode(getInput()) or {}
+local View=d.view or "wps"
+local Items=d.items or {}
+local Total=d.total or 0
+local SelName=d.sel or ""
+local SelIdx=(type(d.sel)=="number") and d.sel or 0
+local PCount=d.pcount or 0
+local Pending=d.pending or ""
+local Status=d.status or ""
+local Sending=d.sending or false
+local ack=d.ack or false
+local RouteNm=d.rt or ""
+local OrgNm=d.orgname or ""
+local OrgCh=d.orgch or ""
+-- Theme
 local Ar,Ag,Ab=%f,%f,%f local Nr,Ng,Nb=%f,%f,%f
 local Bgr,Bgg,Bgb=%f,%f,%f
 local Txr,Txg,Txb=%f,%f,%f
@@ -480,15 +583,6 @@ local PHr,PHg,PHb=%f,%f,%f local TAr,TAg,TAb=%f,%f,%f local TBr,TBg,TBb=%f,%f,%f
 local STr,STg,STb=%f,%f,%f local SHr,SHg,SHb=%f,%f,%f
 local FTr,FTg,FTb=%f,%f,%f
 local DMr,DMg,DMb=%f,%f,%f local NMr,NMg,NMb=%f,%f,%f local LBr,LBg,LBb=%f,%f,%f local TIr,TIg,TIb=%f,%f,%f
-local ScrollWP=%d local ScrollRT=%d
-local SelWP=%q local SelRT=%q local SelStop=%d
-local SelPending=%d local ShowPending=%s
-local StatusMsg=%q local OrgName=%q local OrgChannel=%q
-local WP=%s
-local RT=%s
-local STOPS=%s
-local PENDING=%s
-local function ENC(t) local s="[" for i,v in ipairs(t) do if i>1 then s=s.."," end if type(v)=="string" then s=s..'"'..v..'"' else s=s..tostring(v) end end return s.."]" end
 ]],
     P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
     P.bgr,P.bgg,P.bgb,
@@ -504,245 +598,281 @@ local function ENC(t) local s="[" for i,v in ipairs(t) do if i>1 then s=s.."," e
     P.phdr,P.phdg,P.phdb, P.tabr,P.tabg,P.tabb, P.tbbr,P.tbbg,P.tbbb,
     P.sbtr,P.sbtg,P.sbtb, P.sbhr,P.sbhg,P.sbhb,
     P.ftr,P.ftg,P.ftb,
-    P.dmr,P.dmg,P.dmb, P.nmr,P.nmg,P.nmb, P.lbr,P.lbg,P.lbb, P.tir,P.tig,P.tib,
-    ScrollWP,ScrollRT,SelWP,SelRoute,SelStop,
-    SelPending,tostring(ShowPending),
-    StatusMsg,OrgName,OrgChannel,wpLit,rtLit,ptLit,pdLit)
+    P.dmr,P.dmg,P.dmb, P.nmr,P.nmg,P.nmb, P.lbr,P.lbg,P.lbb, P.tir,P.tig,P.tib)
 
   S[2]=[[
+if not _S then _S={action=""} end
+if ack then _S.action="" end
+local function setAct(a) if _S.action=="" then _S.action=a end end
+local SW,SH=getResolution()
+local cx,cy=getCursor() local pr=getCursorReleased()
+local C=32
 local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
-local Lb=createLayer() local Ls=createLayer() local Lt=createLayer()
-local Lh=createLayer() local Lx=createLayer() local Lst=createLayer()
-local cx,cy=getCursor() local pr=getCursorReleased() local Out=""
-local fT=loadFont("Montserrat-Light",18) local fS=loadFont("Montserrat-Light",13)
-local fH=loadFont("Montserrat-Light",20) local fB=loadFont("Montserrat-Light",22)
+local Lb=createLayer()  local Ls=createLayer() local Lt=createLayer()
+local Lh=createLayer()  local Lx=createLayer()
+local fT=loadFont("Montserrat-Light",math.floor(SH*0.031))
+local fS=loadFont("Montserrat-Light",math.floor(SH*0.022))
+local fH=loadFont("Montserrat-Light",math.floor(SH*0.035))
+local fB=loadFont("Montserrat-Light",math.floor(SH*0.042))
 setDefaultFillColor(Lt,Shape_Text,Txr,Txg,Txb,1)
 setDefaultFillColor(Lh,Shape_Text,Ar,Ag,Ab,1)
 setDefaultFillColor(Ls,Shape_Text,Nr,Ng,Nb,1)
 setDefaultFillColor(Lx,Shape_Text,Hdr,Hdg,Hdb,1)
-setDefaultFillColor(Lst,Shape_Text,Str,Stg,Stb,1)
 setDefaultStrokeColor(Ll,Shape_Line,Lnr,Lng,Lnb,0.6)
 setDefaultStrokeWidth(Ll,Shape_Line,1)
 setNextFillColor(Lbg,Bgr,Bgg,Bgb,1) addBox(Lbg,0,0,SW,SH)
-local wpX,wpW=0,400 local rtX,rtW=400,300 local actX,actW=700,324
-local CON_Y=32 local vis=math.floor((SH-64)/C)-1
-local function PH(x,w,r,g,b)
-  setNextFillColor(Lp,r,g,b,0.88) addBox(Lp,x,CON_Y,w,C)
-end
 local function Btn(tx,x,y,w,h,en)
   local hv=(cx>=x and cx<x+w and cy>=y and cy<y+h)
   if not en then
-    setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7) setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5)
-    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextFillColor(Lt,BDtr,BDtg,BDtb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-    addText(Lt,fT,tx,x+w/2,y+h/2) return false
-  elseif hv then
-    setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1)
-    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
-  else
-    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1)
-    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+    setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7) setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5) setNextStrokeWidth(Lb,1)
+    addBoxRounded(Lb,x,y,w,h,4)
+    setNextFillColor(Lt,BDtr,BDtg,BDtb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+    return false
   end
+  if hv then setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1) setNextStrokeWidth(Lb,1)
+  else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1) setNextStrokeWidth(Lb,1) end
+  addBoxRounded(Lb,x,y,w,h,4)
+  setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
   return hv and pr
 end
 ]]
 
   S[3]=[[
--- HEADER
-setNextFillColor(Lp,PHr,PHg,PHb,1) setNextStrokeColor(Lp,Lnr,Lng,Lnb,0.8)
-setNextStrokeWidth(Lp,2) addBox(Lp,0,0,SW,C)
-setNextTextAlign(Lx,AlignH_Left,AlignV_Middle) addText(Lx,fB,"◄ ORG BASE ADMIN ►  "..OrgName,8,C/2)
-local pendingBadge=""
-if #PENDING>0 then pendingBadge="  ⚠ "..#PENDING.." PENDING" end
-setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-addText(Lt,fT,#WP.." WPs  |  "..#RT.." Routes  |  ch: "..OrgChannel..pendingBadge,SW-8,C/2)
-if #PENDING>0 then
-  setNextFillColor(Lst,Str,Stg,Stb,1) setNextTextAlign(Lst,AlignH_Right,AlignV_Middle)
-  addText(Lst,fT,pendingBadge,SW-8,C/2)
+-- TOP NAV BAR
+local tabH=C
+local pendLabel=PCount>0 and ("PENDING ["..PCount.."]") or "PENDING"
+local navTabs={
+  {l="WAYPOINTS",v="wps"},
+  {l=View=="stops" and ("◄ "..RouteNm:sub(1,14)) or "ROUTES",v="routes"},
+  {l=pendLabel,v="pending"},
+}
+setNextFillColor(Lp,TBr,TBg,TBb,1) addBox(Lp,0,0,SW,tabH)
+local tabW=math.floor(SW/#navTabs)
+for i,tab in ipairs(navTabs) do
+  local tx=(i-1)*tabW
+  local active=(View==tab.v) or (View=="stops" and tab.v=="routes")
+  local isBack=(View=="stops" and tab.v=="routes")
+  if active then
+    setNextFillColor(Lp,TAr,TAg,TAb,1) setNextStrokeColor(Lp,Ar,Ag,Ab,0.8) setNextStrokeWidth(Lp,1)
+    addBox(Lp,tx,0,tabW,tabH)
+  end
+  -- Highlight pending tab if there are items
+  local isPendTab=(tab.v=="pending") and PCount>0
+  local L=active and Lx or (isPendTab and Ls or Lt)
+  if not active then
+    if isPendTab then setNextFillColor(Ls,Str,Stg,Stb,1)
+    else setNextFillColor(Lt,TIr,TIg,TIb,1) end
+  end
+  setNextTextAlign(L,AlignH_Center,AlignV_Middle)
+  addText(L,active and fB or fT,tab.l,tx+tabW/2,tabH/2)
+  if i>1 then addLine(Ll,tx,0,tx,tabH) end
+  local hv=(cx>=tx and cx<tx+tabW and cy>=0 and cy<tabH)
+  if hv and pr and (not active or isBack) then setAct(json.encode({"nav",tab.v})) end
 end
-addLine(Ll,0,C,SW,C)
-addLine(Ll,wpX+wpW,CON_Y,wpX+wpW,SH-32) addLine(Ll,rtX+rtW,CON_Y,rtX+rtW,SH-32)
+addLine(Ll,0,tabH,SW,tabH)
+if Sending then
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+  addText(Lt,fS,"⟳",SW-6,tabH/2)
+end
+local CON_Y=tabH+2
+local FOOT_Y=SH-32
 ]]
 
   S[4]=[[
--- WAYPOINTS
-PH(wpX,wpW,PHr,PHg,PHb)
-setNextTextAlign(Lx,AlignH_Center,AlignV_Middle)
-addText(Lx,fH,"WAYPOINTS ["..#WP.."]",wpX+wpW/2,CON_Y+C/2)
-addLine(Ll,wpX,CON_Y+C,wpX+wpW,CON_Y+C)
-local maxSW=math.max(0,#WP-vis) local sCW=math.max(0,math.min(ScrollWP,maxSW))
-for i=1,vis do
-  local idx=i+sCW if idx>#WP then break end
-  local wp=WP[idx] local ry=CON_Y+C+(i-1)*C
-  local sel=(wp.n==SelWP) local hv=(cx>=wpX and cx<wpX+wpW and cy>=ry and cy<ry+C)
-  if sel then
-    setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9)
-    setNextStrokeWidth(Lp,1) addBox(Lp,wpX,ry,wpW,C)
-  elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,wpX,ry,wpW,C) end
-  setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-  addText(Lt,fS,idx..".",wpX+26,ry+C/2)
-  local L=(sel or hv) and Ls or Lt
-  if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
-  setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,wp.n,wpX+30,ry+C/2)
-  setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.18) addLine(Ll,wpX,ry+C,wpX+wpW,ry+C)
-  if hv and pr then Out=ENC({"selwp",wp.n}) end
+-- CONTENT AREA
+local hasSel=(View=="wps" and SelName~="") or (View=="routes" and SelName~="")
+           or (View=="stops" and SelIdx>0) or (View=="pending" and Total>0)
+local actH=(hasSel or View=="pending") and 36 or 0
+setNextFillColor(Lp,PHr,PHg,PHb,1) addBox(Lp,0,CON_Y,SW,C)
+addLine(Ll,0,CON_Y+C,SW,CON_Y+C)
+local listY=CON_Y+C
+local listH=FOOT_Y-actH-listY-2
+local vis=math.max(1,math.floor(listH/C))
+local lW=SW-22
+
+local function ScrollBtns()
+  if Total<=#Items then return end
+  local upHv=(cx>=SW-20 and cx<SW and cy>=listY and cy<listY+C)
+  if upHv then setNextFillColor(Lb,BHfr,BHfg,BHfb,0.9) else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.5) end
+  addBox(Lb,SW-20,listY,20,C-1)
+  setNextFillColor(Lt,Txr,Txg,Txb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+  addText(Lt,fS,"▲",SW-10,listY+C/2)
+  if upHv and pr then setAct(json.encode({"scroll",-1})) end
+  local dnY=FOOT_Y-actH-C
+  local dnHv=(cx>=SW-20 and cx<SW and cy>=dnY and cy<dnY+C)
+  if dnHv then setNextFillColor(Lb,BHfr,BHfg,BHfb,0.9) else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.5) end
+  addBox(Lb,SW-20,dnY,20,C-1)
+  setNextFillColor(Lt,Txr,Txg,Txb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+  addText(Lt,fS,"▼",SW-10,dnY+C/2)
+  if dnHv and pr then setAct(json.encode({"scroll",1})) end
 end
-if #WP>vis then
-  local sbX=wpX+wpW-10 local sbW=10 local sbY=CON_Y+C+2 local sbH=vis*C-4
-  local tH=math.max(18,sbH*(vis/#WP)) local tY=sbY+(sbH-tH)*(sCW/math.max(1,maxSW))
-  setNextFillColor(Ll,STr,STg,STb,0.5) addBox(Ll,sbX,sbY,sbW,sbH)
-  setNextFillColor(Ll,SHr,SHg,SHb,0.8) addBox(Ll,sbX,tY,sbW,tH)
-  if cx>=sbX and cx<sbX+sbW and cy>=sbY and cy<sbY+sbH and pr then
-    Out=ENC({"scrollwp",cy<tY+tH/2 and -1 or 1})
+
+if View=="wps" then
+  setNextFillColor(Lx,Hdr,Hdg,Hdb,1) setNextTextAlign(Lx,AlignH_Left,AlignV_Middle)
+  addText(Lx,fH," WAYPOINTS ["..Total.."]  "..OrgNm,8,CON_Y+C/2)
+  if SelName~="" and d.sel_c and d.sel_c~="" then
+    setNextFillColor(Lt,DMr,DMg,DMb,0.85) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+    addText(Lt,fS,d.sel_c.."  ",lW,CON_Y+C/2)
+  end
+  ScrollBtns()
+  for i,wp in ipairs(Items) do
+    local ry=listY+(i-1)*C
+    if ry+C>FOOT_Y-actH then break end
+    local absIdx=i+(d.scroll or 0)
+    local sel=(wp.n==SelName)
+    local hv=(cx>=0 and cx<lW and cy>=ry and cy<ry+C)
+    if sel then
+      setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9) setNextStrokeWidth(Lp,1) addBox(Lp,0,ry,lW,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,0,ry,lW,C) end
+    setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle) addText(Lt,fS,absIdx..".",26,ry+C/2)
+    local Ln=sel and Ls or Lt
+    if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
+    setNextTextAlign(Ln,AlignH_Left,AlignV_Middle) addText(Ln,fT,wp.n,30,ry+C/2)
+    local coord_mark=wp.hc and "●" or "—"
+    setNextFillColor(Lt,wp.hc and DMr or NMr, wp.hc and DMg or NMg, wp.hc and DMb or NMb,0.6)
+    setNextTextAlign(Lt,AlignH_Right,AlignV_Middle) addText(Lt,fS,coord_mark,lW-2,ry+C/2)
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.15) addLine(Ll,0,ry+C,SW,ry+C)
+    if hv and pr then setAct(json.encode({"sel",wp.n})) end
+  end
+
+elseif View=="routes" then
+  setNextFillColor(Lx,Hdr,Hdg,Hdb,1) setNextTextAlign(Lx,AlignH_Left,AlignV_Middle)
+  addText(Lx,fH," ROUTES ["..Total.."]  "..OrgNm,8,CON_Y+C/2)
+  ScrollBtns()
+  for i,r in ipairs(Items) do
+    local ry=listY+(i-1)*C
+    if ry+C>FOOT_Y-actH then break end
+    local sel=(r.n==SelName)
+    local hv=(cx>=0 and cx<lW and cy>=ry and cy<ry+C)
+    if sel then
+      setNextFillColor(Lp,Rtdr,Rtdg,Rtdb,0.22) setNextStrokeColor(Lp,Rtr,Rtg,Rtb,0.9) setNextStrokeWidth(Lp,1) addBox(Lp,0,ry,lW,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,0,ry,lW,C) end
+    local Ln=sel and Ls or Lt
+    if sel then setNextFillColor(Ls,Rtlr,Rtlg,Rtlb,1) end
+    setNextTextAlign(Ln,AlignH_Left,AlignV_Middle) addText(Ln,fT,r.n,8,ry+C/2)
+    setNextFillColor(Lt,Rtdr,Rtdg,Rtdb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+    addText(Lt,fT,(r.pc or 0).." ▶",lW-4,ry+C/2)
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.15) addLine(Ll,0,ry+C,SW,ry+C)
+    if hv and pr then setAct(json.encode({"sel",r.n})) end
+  end
+
+elseif View=="stops" then
+  setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Left,AlignV_Middle)
+  addText(Lh,fH," "..RouteNm.."  ["..Total.." stops]",8,CON_Y+C/2)
+  ScrollBtns()
+  for i,st in ipairs(Items) do
+    local ry=listY+(i-1)*C
+    if ry+C>FOOT_Y-actH then break end
+    local absIdx=i+(d.scroll or 0)
+    local sel=(SelIdx==absIdx)
+    local hv=(cx>=0 and cx<lW and cy>=ry and cy<ry+C)
+    if sel then
+      setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9) setNextStrokeWidth(Lp,1) addBox(Lp,0,ry,lW,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,0,ry,lW,C) end
+    local lbl=(st.label and st.label~="") and st.label or ""
+    setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle) addText(Lt,fS,absIdx..".",26,ry+C/2)
+    local Ln=sel and Ls or Lt
+    if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
+    setNextTextAlign(Ln,AlignH_Left,AlignV_Middle) addText(Ln,fT,lbl~="" and lbl or (st.c or ""),30,ry+C/2)
+    if lbl~="" then
+      setNextFillColor(Lt,DMr,DMg,DMb,0.7) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+      addText(Lt,fS,st.c or "",lW-2,ry+C/2)
+    end
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.15) addLine(Ll,0,ry+C,SW,ry+C)
+    if hv and pr then setAct(json.encode({"sel",absIdx})) end
+  end
+
+else -- pending view
+  local pendHdr=PCount>0 and ("PENDING ["..PCount.."]") or "PENDING — none"
+  setNextFillColor(Ls,Str,Stg,Stb,1) setNextTextAlign(Ls,AlignH_Left,AlignV_Middle)
+  addText(Ls,fH," "..pendHdr,8,CON_Y+C/2)
+  if Total==0 then
+    setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+    addText(Lt,fT,"No pending submissions",SW/2,listY+C*2)
+  end
+  for i,entry in ipairs(Items) do
+    local ry=listY+(i-1)*C
+    if ry+C>FOOT_Y-actH then break end
+    local sel=(SelIdx==i)
+    local hv=(cx>=0 and cx<lW and cy>=ry and cy<ry+C)
+    if sel then
+      setNextFillColor(Lp,SLr,SLg,SLb,0.4) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9) setNextStrokeWidth(Lp,1) addBox(Lp,0,ry,lW,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,0,ry,lW,C) end
+    local badge=entry.t=="wp" and "[WP]" or "[RT]"
+    setNextFillColor(Ls,Str,Stg,Stb,1) setNextTextAlign(Ls,AlignH_Left,AlignV_Middle)
+    addText(Ls,fS,badge,8,ry+C/2)
+    local Ln=sel and Ls or Lt
+    if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
+    setNextTextAlign(Ln,AlignH_Left,AlignV_Middle) addText(Ln,fT,(entry.n or "?"):sub(1,28),50,ry+C/2)
+    setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+    addText(Lt,fS,(entry.from or "?"):sub(1,24),lW-2,ry+C/2)
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.15) addLine(Ll,0,ry+C,SW,ry+C)
+    if hv and pr then setAct(json.encode({"sel",i})) end
   end
 end
 ]]
 
   S[5]=[[
--- ROUTES / STOPS
-if SelStop>0 and SelRT~="" then
-  PH(rtX,rtW,PHr,PHg,PHb)
-  setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Left,AlignV_Middle)
-  addText(Lh,fH,"◄ "..SelRT,rtX+8,CON_Y+C/2)
-  addLine(Ll,rtX,CON_Y+C,rtX+rtW,CON_Y+C)
-  local maxSR=math.max(0,#STOPS-vis) local sCR=math.max(0,math.min(ScrollRT,maxSR))
-  for i=1,vis do
-    local idx=i+sCR if idx>#STOPS then break end
-    local st=STOPS[idx] local ry=CON_Y+C+(i-1)*C
-    local sel=(SelStop==idx) local hv=(cx>=rtX and cx<rtX+rtW and cy>=ry and cy<ry+C)
-    if sel then
-      setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9)
-      setNextStrokeWidth(Lp,1) addBox(Lp,rtX,ry,rtW,C)
-    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,rtX,ry,rtW,C) end
-    setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-    addText(Lt,fS,idx..".",rtX+22,ry+C/2)
-    local lbl=st.label or st.c:sub(1,24)
-    local L=(sel or hv) and Ls or Lt
-    if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
-    setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,lbl,rtX+26,ry+C/2)
-    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.18) addLine(Ll,rtX,ry+C,rtX+rtW,ry+C)
-    if hv and pr then Out=ENC({"selstop",idx}) end
-  end
-else
-  PH(rtX,rtW,Rtdr,Rtdg,Rtdb)
-  setNextFillColor(Lh,Rtr,Rtg,Rtb,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
-  addText(Lh,fH,"ROUTES ["..#RT.."]",rtX+rtW/2,CON_Y+C/2)
-  addLine(Ll,rtX,CON_Y+C,rtX+rtW,CON_Y+C)
-  local maxSR=math.max(0,#RT-vis) local sCR=math.max(0,math.min(ScrollRT,maxSR))
-  for i=1,vis do
-    local idx=i+sCR if idx>#RT then break end
-    local r=RT[idx] local ry=CON_Y+C+(i-1)*C
-    local sel=(r.n==SelRT) local hv=(cx>=rtX and cx<rtX+rtW and cy>=ry and cy<ry+C)
-    if sel then
-      setNextFillColor(Lp,Rtdr,Rtdg,Rtdb,0.22) setNextStrokeColor(Lp,Rtr,Rtg,Rtb,0.9)
-      setNextStrokeWidth(Lp,1) addBox(Lp,rtX,ry,rtW,C)
-    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,rtX,ry,rtW,C) end
-    local L=(sel or hv) and Ls or Lt
-    if sel then setNextFillColor(Ls,Rtlr,Rtlg,Rtlb,1) end
-    setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,r.n,rtX+8,ry+C/2)
-    local np=#(r.pts or {})
-    setNextFillColor(Lt,Rtdr,Rtdg,Rtdb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-    addText(Lt,fS,np.."▶",rtX+rtW-6,ry+C/2)
-    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.18) addLine(Ll,rtX,ry+C,rtX+rtW,ry+C)
-    if hv and pr then Out=ENC({"selrt",r.n}) end
+-- ACTION BAR
+if hasSel or View=="pending" then
+  local abY=FOOT_Y-actH
+  setNextFillColor(Lp,PHr,PHg,PHb,0.95) addBox(Lp,0,abY,SW,actH)
+  addLine(Ll,0,abY,SW,abY)
+  local bH=actH-6 local bG=4 local bx=4
+  if View=="wps" then
+    local bW=math.floor((SW-8-bG*4)/5)
+    if Btn("ADD WP",    bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","add_wp"}))    end bx=bx+bW+bG
+    if Btn("RENAME",    bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","rename"}))    end bx=bx+bW+bG
+    if Btn("SET COORDS",bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","set_coords"}))end bx=bx+bW+bG
+    if Btn("PRINT",     bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","print"}))     end bx=bx+bW+bG
+    if Btn("DELETE",    bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","delete"}))    end
+  elseif View=="routes" then
+    local bW=math.floor((SW-8-bG*4)/5)
+    if Btn("NEW ROUTE", bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","new_route"})) end bx=bx+bW+bG
+    if Btn("STOPS ▶",   bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","open_stops"}))end bx=bx+bW+bG
+    if Btn("RENAME",    bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","rename"}))    end bx=bx+bW+bG
+    if Btn("ADD STOP",  bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","add_stop"}))  end bx=bx+bW+bG
+    if Btn("DELETE",    bx,abY+3,bW,bH,SelName~="") then setAct(json.encode({"cmd","delete"}))    end
+  elseif View=="stops" then
+    local bW=math.floor((SW-8-bG*4)/5)
+    if Btn("ADD STOP",   bx,abY+3,bW,bH,true)     then setAct(json.encode({"cmd","add_stop"}))  end bx=bx+bW+bG
+    if Btn("RENAME",     bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","rename"}))    end bx=bx+bW+bG
+    if Btn("SET COORDS", bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","set_coords"}))end bx=bx+bW+bG
+    if Btn("PRINT",      bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","print"}))     end bx=bx+bW+bG
+    if Btn("DEL STOP",   bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","delete"}))    end
+  else -- pending
+    local bW=math.floor((SW-8-bG*3)/4)
+    if Btn("✔ APPROVE",    bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","approve",SelIdx})) end bx=bx+bW+bG
+    if Btn("✕ REJECT",     bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","reject",SelIdx}))  end bx=bx+bW+bG
+    if Btn("✔ APPROVE ALL",bx,abY+3,bW,bH,Total>0)  then setAct(json.encode({"cmd","approveall"}))     end bx=bx+bW+bG
+    if Btn("✕ REJECT ALL", bx,abY+3,bW,bH,Total>0)  then setAct(json.encode({"cmd","rejectall"}))      end
   end
 end
 ]]
 
   S[6]=[[
--- ACTION PANEL
-local pendingLabel="ORG ADMIN"..(#PENDING>0 and "  ⚠"..#PENDING or "")
-if ShowPending then
-  PH(actX,actW,PHr,PHg,PHb)
-  setNextFillColor(Lst,Str,Stg,Stb,1) setNextTextAlign(Lst,AlignH_Center,AlignV_Middle)
-  addText(Lst,fH,"PENDING ["..#PENDING.."]",actX+actW/2,CON_Y+C/2)
-  addLine(Ll,actX,CON_Y+C,actX+actW,CON_Y+C)
-  local bX=actX+6 local bW=actW-12 local bH=26 local bG=4
-  local pvis=math.floor((SH-64-C-(bH+bG)*3)/C)
-  for i=1,math.min(pvis,#PENDING) do
-    local entry=PENDING[i]
-    local ry=CON_Y+C+(i-1)*C
-    local sel=(SelPending==i)
-    local hv=(cx>=actX and cx<actX+actW and cy>=ry and cy<ry+C)
-    if sel then
-      setNextFillColor(Lp,SLr,SLg,SLb,0.4) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9)
-      setNextStrokeWidth(Lp,1) addBox(Lp,actX,ry,actW,C)
-    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,actX,ry,actW,C) end
-    local badge=entry.type=="wp" and "[WP]" or "[RT]"
-    local name=entry.n or "?"
-    local from=entry.from or "?"
-    setNextFillColor(Lst,Str,Stg,Stb,1) setNextTextAlign(Lst,AlignH_Left,AlignV_Middle)
-    addText(Lst,fS,badge,actX+6,ry+C/2)
-    local L=sel and Ls or Lt
-    setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,name:sub(1,18),actX+46,ry+C/2)
-    setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-    addText(Lt,fS,from:sub(1,20),actX+actW-6,ry+C/2)
-    if hv and pr then Out=ENC({"selpending",i}) end
-  end
-  if #PENDING==0 then
-    setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-    addText(Lt,fT,"No pending items",actX+actW/2,CON_Y+C*3)
-  end
-  local by=SH-32-(bH+bG)*3
-  if Btn("✔ ACCEPT",   bX,by,bW/2-2,bH,SelPending>0) then Out=ENC({"approve",SelPending}) end
-  if Btn("✕ REJECT",   bX+bW/2+2,by,(bW/2)-2,bH,SelPending>0) then Out=ENC({"reject",SelPending}) end by=by+bH+bG
-  if Btn("✔ ACCEPT ALL",bX,by,bW/2-2,bH,#PENDING>0) then Out=ENC({"approveall"}) end
-  if Btn("✕ REJECT ALL",bX+bW/2+2,by,(bW/2)-2,bH,#PENDING>0) then Out=ENC({"rejectall"}) end by=by+bH+bG
-  if Btn("◄ BACK",     bX,by,bW,bH,true) then Out=ENC({"showpending",false}) end
-else
-  PH(actX,actW,PHr,PHg,PHb)
-  setNextTextAlign(Lx,AlignH_Center,AlignV_Middle)
-  addText(Lx,fH,pendingLabel,actX+actW/2,CON_Y+C/2)
-  addLine(Ll,actX,CON_Y+C,actX+actW,CON_Y+C)
-  local selInfo=""
-  if SelWP~="" then selInfo="[WP] "..SelWP
-  elseif SelRT~="" and SelStop>0 then selInfo="[STOP "..SelStop.."] "..SelRT
-  elseif SelRT~="" then selInfo="[ROUTE] "..SelRT end
-  if selInfo~="" then
-    setNextFillColor(Ls,Nr,Ng,Nb,1) setNextTextAlign(Ls,AlignH_Left,AlignV_Top)
-    addText(Ls,fS,"SELECTED:",actX+8,CON_Y+C+8)
-    setNextFillColor(Ls,Nr,Ng,Nb,1) setNextTextAlign(Ls,AlignH_Left,AlignV_Top)
-    addText(Ls,fT,selInfo,actX+8,CON_Y+C+22)
-  end
-  local bX=actX+6 local bW=actW-12 local bH=26 local bG=4
-  local by=SH-32-(bH+bG)*9
-  if Btn("★ ADD WP (chat: add NAME)",bX,by,bW,bH,true)            then Out=ENC({"hint_add"})            end by=by+bH+bG
-  if Btn("✎ RENAME",                 bX,by,bW,bH,selInfo~="")     then Out=ENC({"hint_rename"})         end by=by+bH+bG
-  if Btn("✎ SET COORDS",             bX,by,bW,bH,selInfo~="")     then Out=ENC({"hint_setpos"})         end by=by+bH+bG
-  if Btn("+ NEW ROUTE",              bX,by,bW,bH,true)            then Out=ENC({"hint_newroute"})       end by=by+bH+bG
-  if Btn("+ ADD STOP TO ROUTE",      bX,by,bW,bH,SelRT~="" and SelStop==0) then Out=ENC({"hint_addstop"}) end by=by+bH+bG
-  if Btn("✕ DELETE SELECTED",        bX,by,bW,bH,selInfo~="")     then Out=ENC({"delete"})              end by=by+bH+bG
-  if Btn("✕ CLEAR ALL WPs",          bX,by,bW,bH,#WP>0)           then Out=ENC({"clearwps"})            end by=by+bH+bG
-  if Btn("✕ CLEAR ALL ROUTES",       bX,by,bW,bH,#RT>0)           then Out=ENC({"clearroutes"})         end by=by+bH+bG
-  if Btn("⚠ REVIEW PENDING ["..#PENDING.."]",bX,by,bW,bH,true)   then Out=ENC({"showpending",true})    end
-end
-]]
-
-  S[7]=[[
 -- FOOTER
-addLine(Ll,0,SH-32,SW,SH-32)
-setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,SH-32,SW,32)
--- [THEME] button in footer
-local thX=SW-80 local thW=72 local thY=SH-28 local thH=22
+addLine(Ll,0,FOOT_Y,SW,FOOT_Y)
+setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,FOOT_Y,SW,32)
+local thX=SW-80 local thW=72 local thY=FOOT_Y+5 local thH=22
 local thHv=(cx>=thX and cx<thX+thW and cy>=thY and cy<thY+thH)
-if thHv then
-  setNextFillColor(Lb,BHfr,BHfg,BHfb,0.8) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.8)
-else
-  setNextFillColor(Lb,BNfr,BNfg,BNfb,0.6) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.6)
-end
+if thHv then setNextFillColor(Lb,BHfr,BHfg,BHfb,0.8) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.8)
+else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.6) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.6) end
 setNextStrokeWidth(Lb,1) addBoxRounded(Lb,thX,thY,thW,thH,3)
 setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"THEME",thX+thW/2,thY+thH/2)
-if thHv and pr then Out=ENC({"open_theme"}) end
--- Status / hint text
-if StatusMsg~="" then
-  setNextTextAlign(Lst,AlignH_Center,AlignV_Middle) addText(Lst,fT,StatusMsg,SW/2-40,SH-16)
+if thHv and pr then setAct(json.encode({"open_theme"})) end
+if Pending~="" then
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
+  addText(Lt,fT,"► "..Pending,8,FOOT_Y+16)
+elseif Status~="" then
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
+  addText(Lt,fT,Status,8,FOOT_Y+16)
 else
-  setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-  addText(Lt,fS,"ADMIN ONLY  |  chat: add / del / rename / setpos / newroute / addstop / help",SW/2-40,SH-16)
+  setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
+  addText(Lt,fS,"ADMIN: "..OrgNm.."  ch: "..OrgCh.."  |  chat: add / del / rename / setpos / newroute / addstop",8,FOOT_Y+16)
 end
-setOutput(Out) requestAnimationFrame(2)
+setOutput(json.encode({a=_S.action}))
+requestAnimationFrame(2)
 ]]
   return table.concat(S)
 end
@@ -1108,102 +1238,203 @@ if not raw or raw=="" or raw==LastScreenOut then return end
 LastScreenOut=raw
 local ok,d=pcall(json.decode,raw)
 if not ok or type(d)~="table" then return end
-local act=d[1]
-if     act=="scrollwp"    then ScrollWP=math.max(0,ScrollWP+(d[2] or 1))
-elseif act=="scrollrt"    then ScrollRT=math.max(0,ScrollRT+(d[2] or 1))
-elseif act=="selwp"       then SelWP=(SelWP==d[2] and "" or d[2]); SelRoute=""; SelStop=0
-elseif act=="selrt"       then
-  if SelRoute==d[2] then SelStop=(SelStop==0 and 1 or 0)
-  else SelRoute=d[2]; SelStop=0; SelWP="" end
-elseif act=="selstop"     then SelStop=(SelStop==d[2] and 0 or d[2])
-elseif act=="delete"      then
-  if SelWP~="" then DelWP(SelWP); SelWP=""
-  elseif SelRoute~="" and SelStop>0 then DelStop(SelRoute,SelStop); SelStop=0
-  elseif SelRoute~="" then DelRoute(SelRoute); SelRoute=""; SelStop=0 end
-elseif act=="clearwps"    then WaypointList={}; SelWP=""; SaveData(); SetStatus("WPs cleared")
-elseif act=="clearroutes" then RouteList={}; SelRoute=""; SelStop=0; SaveData(); SetStatus("Routes cleared")
-elseif act=="hint_add"    then SetStatus("Chat: add NAME ::pos{0,0,x,y,z}",8)
-elseif act=="hint_rename" then SetStatus("Chat: rename NEWNAME",8)
-elseif act=="hint_setpos" then SetStatus("Chat: setpos ::pos{0,0,x,y,z}",8)
-elseif act=="hint_newroute" then SetStatus("Chat: newroute NAME",8)
-elseif act=="hint_addstop"  then SetStatus("Chat: addstop WPname  or  addstop ::pos{...}",8)
-elseif act=="showpending" then ShowPending=d[2]; SelPending=0
-elseif act=="selpending"  then SelPending=(SelPending==d[2] and 0 or d[2])
-elseif act=="approve" then
-  LoadPending()
-  local idx=d[2]
-  local nwp=#PendingWPs
-  if idx>=1 and idx<=nwp then
-    local item=PendingWPs[idx]
-    if item and item.data and item.data.n and item.data.c then
-      MergeWP(item.data.n, item.data.c)
-      SetStatus("Approved WP: "..item.data.n)
-    end
-    table.remove(PendingWPs, idx)
-  elseif idx>=1 then
-    local ri=idx-nwp
-    if ri>=1 and ri<=#PendingRoutes then
-      local item=PendingRoutes[ri]
-      if item and item.data and item.data.n then
-        MergeRoute(item.data)
-        SetStatus("Approved route: "..item.data.n)
+
+-- Theme picker mode: output is a JSON array like ["theme_close"]
+if ShowThemePicker then
+  local act=d[1] or ""
+  if act=="" then PushState(); return end
+  if     act=="theme_close"    then ShowThemePicker=false
+  elseif act=="theme_sel_elem" then PickerElem=d[2] or 1
+  elseif act=="theme_set_hue"  then
+    local h=d[2] or 0; ThemeSlots[PickerElem].h=h; RefreshTheme()
+  elseif act=="theme_set_sv"   then
+    local s,v=d[2] or 0.5, d[3] or 0.5
+    ThemeSlots[PickerElem].s=math.max(0,math.min(1,s))
+    ThemeSlots[PickerElem].v=math.max(0,math.min(1,v)); RefreshTheme()
+  elseif act=="theme_save"     then
+    SaveTheme(GetActiveProfileName(),ThemeSlots); SetStatus("Theme saved: "..GetActiveProfileName())
+  elseif act=="theme_load"     then
+    local name=d[2] or ""
+    local raw2=databank and databank.getStringValue("orgtheme_p_"..name) or ""
+    if raw2~="" then
+      local ok2,data=pcall(json.decode,raw2)
+      if ok2 and data and #data>=8 then
+        ThemeSlots=data
+        databank.setStringValue("orgtheme_profile_active",name)
+        RefreshTheme(); SetStatus("Loaded: "..name)
       end
-      table.remove(PendingRoutes, ri)
+    else SetStatus("Profile not found: "..name) end
+  elseif act=="theme_new"      then
+    local names=GetThemeProfiles(); local newName="Theme "..#names+1
+    SaveTheme(newName,ThemeSlots); SetStatus("Created: "..newName)
+  elseif act=="theme_delete"   then
+    local name=GetActiveProfileName(); DeleteTheme(name)
+    ThemeSlots=LoadTheme(); RefreshTheme(); SetStatus("Deleted: "..name)
+  elseif act=="theme_reset"    then
+    ThemeSlots=DefaultOrgTheme(); RefreshTheme()
+    SaveTheme(GetActiveProfileName(),ThemeSlots); SetStatus("Theme reset to defaults")
+  end
+  PushState(); return
+end
+
+-- Main screen mode: output is {a=action_json}
+if not d.a or d.a=="" then PushState(); return end
+pending_ack=true
+local ok2,act=pcall(json.decode,d.a)
+if not ok2 or type(act)~="table" then PushState(); return end
+local cmd=act[1]
+
+if cmd=="nav" then
+  local v=act[2]
+  if v=="routes" and ActiveView=="stops" then
+    ActiveView="routes"; SelStop=0; ViewScroll=0
+  else
+    ActiveView=v; SelWP=""; SelRoute=""; SelStop=0; SelPending=0; ViewScroll=0
+  end
+
+elseif cmd=="scroll" then
+  local all = ActiveView=="wps" and WaypointList
+           or ActiveView=="routes" and RouteList
+           or ActiveView=="stops" and (function()
+                for _,r in ipairs(RouteList) do if r.n==SelRoute then return r.pts end end; return {}
+              end)()
+           or {}
+  local maxScroll=math.max(0,#all-PAGE)
+  ViewScroll=math.max(0,math.min(ViewScroll+(act[2] or 0),maxScroll))
+
+elseif cmd=="sel" then
+  if ActiveView=="wps" then
+    SelWP=(SelWP==act[2] and "" or act[2]); SelRoute=""; SelStop=0
+  elseif ActiveView=="routes" then
+    SelRoute=(SelRoute==act[2] and "" or act[2]); SelWP=""; SelStop=0
+  elseif ActiveView=="stops" then
+    SelStop=(SelStop==act[2] and 0 or act[2])
+  elseif ActiveView=="pending" then
+    SelPending=(SelPending==act[2] and 0 or act[2])
+  end
+
+elseif cmd=="cmd" then
+  local c=act[2]
+  if c=="add_wp" then
+    PendingAction="add_wp"; PendingTarget=""
+    SetStatus("Type WP name in chat",30)
+  elseif c=="rename" then
+    if SelWP~="" then PendingAction="rename"; PendingTarget=SelWP
+    elseif SelRoute~="" and SelStop==0 then PendingAction="rename"; PendingTarget=SelRoute
+    elseif SelStop>0 then PendingAction="rename"; PendingTarget=tostring(SelStop) end
+    if PendingAction~="" then SetStatus("Type new name in chat",30) end
+  elseif c=="set_coords" then
+    if SelWP~="" then PendingAction="set_coords"; PendingTarget=SelWP
+    elseif SelStop>0 then PendingAction="set_coords"; PendingTarget=tostring(SelStop) end
+    if PendingAction~="" then SetStatus("Type ::pos{} in chat",30) end
+  elseif c=="new_route" then
+    PendingAction="new_route"; PendingTarget=""
+    SetStatus("Type route name in chat",30)
+  elseif c=="add_stop" then
+    if SelRoute~="" then
+      PendingAction="add_stop"; PendingTarget=SelRoute
+      SetStatus("Type WP name or ::pos{} in chat",30)
     end
-  end
-  SelPending=0; SavePending()
-elseif act=="reject" then
-  LoadPending()
-  local idx=d[2]
-  local nwp=#PendingWPs
-  local name="?"
-  if idx>=1 and idx<=nwp then
-    name=(PendingWPs[idx] and PendingWPs[idx].data and PendingWPs[idx].data.n) or "?"
-    table.remove(PendingWPs, idx)
-  elseif idx>=1 then
-    local ri=idx-nwp
-    if ri>=1 and ri<=#PendingRoutes then
-      name=(PendingRoutes[ri] and PendingRoutes[ri].data and PendingRoutes[ri].data.n) or "?"
-      table.remove(PendingRoutes, ri)
+  elseif c=="open_stops" then
+    if SelRoute~="" then ActiveView="stops"; SelStop=0; ViewScroll=0 end
+  elseif c=="print" then
+    if SelWP~="" then
+      for _,wp in ipairs(WaypointList) do
+        if wp.n==SelWP then
+          system.print("[WP] "..wp.n.."  ("..OrgName..")")
+          system.print(wp.c)
+          break
+        end
+      end
+    elseif SelStop>0 then
+      for _,r in ipairs(RouteList) do
+        if r.n==SelRoute and r.pts[SelStop] then
+          local s=r.pts[SelStop]
+          local lbl=(s.label and s.label~="") and s.label or ("Stop "..SelStop)
+          system.print("[ROUTE] "..SelRoute.."  stop "..SelStop..": "..lbl)
+          system.print(s.c)
+          break
+        end
+      end
     end
+  elseif c=="delete" then
+    if ActiveView=="wps" and SelWP~="" then DelWP(SelWP); SelWP=""
+    elseif ActiveView=="routes" and SelRoute~="" then DelRoute(SelRoute); SelRoute=""; SelStop=0
+    elseif ActiveView=="stops" and SelStop>0 then DelStop(SelRoute,SelStop); SelStop=0 end
+  elseif c=="approve" then
+    LoadPending()
+    local idx=act[3] or 0
+    local nwp=#PendingWPs
+    if idx>=1 and idx<=nwp then
+      local item=PendingWPs[idx]
+      if item and item.data and item.data.n and item.data.c then
+        MergeWP(item.data.n, item.data.c); SetStatus("Approved WP: "..item.data.n)
+      end
+      table.remove(PendingWPs, idx)
+    elseif idx>nwp then
+      local ri=idx-nwp
+      if ri>=1 and ri<=#PendingRoutes then
+        local item=PendingRoutes[ri]
+        if item and item.data and item.data.n then
+          MergeRoute(item.data); SetStatus("Approved route: "..item.data.n)
+        end
+        table.remove(PendingRoutes, ri)
+      end
+    end
+    SelPending=0; SavePending()
+  elseif c=="reject" then
+    LoadPending()
+    local idx=act[3] or 0
+    local nwp=#PendingWPs
+    local name="?"
+    if idx>=1 and idx<=nwp then
+      name=(PendingWPs[idx] and PendingWPs[idx].data and PendingWPs[idx].data.n) or "?"
+      table.remove(PendingWPs, idx)
+    elseif idx>nwp then
+      local ri=idx-nwp
+      if ri>=1 and ri<=#PendingRoutes then
+        name=(PendingRoutes[ri] and PendingRoutes[ri].data and PendingRoutes[ri].data.n) or "?"
+        table.remove(PendingRoutes, ri)
+      end
+    end
+    SelPending=0; SavePending(); SetStatus("Rejected: "..name)
+  elseif c=="approveall" then
+    LoadPending()
+    local count=0
+    for _,item in ipairs(PendingWPs) do
+      if item.data and item.data.n and item.data.c then MergeWP(item.data.n, item.data.c); count=count+1 end
+    end
+    for _,item in ipairs(PendingRoutes) do
+      if item.data and item.data.n then MergeRoute(item.data); count=count+1 end
+    end
+    PendingWPs={}; PendingRoutes={}; SelPending=0
+    SavePending(); SetStatus("Approved all ("..count.." items)")
+  elseif c=="rejectall" then
+    LoadPending()
+    local count=#PendingWPs+#PendingRoutes
+    PendingWPs={}; PendingRoutes={}; SelPending=0
+    SavePending(); SetStatus("Rejected all ("..count.." items)")
   end
-  SelPending=0; SavePending(); SetStatus("Rejected: "..name)
-elseif act=="approveall" then
-  LoadPending()
-  local count=0
-  for _,item in ipairs(PendingWPs) do
-    if item.data and item.data.n and item.data.c then MergeWP(item.data.n, item.data.c); count=count+1 end
-  end
-  for _,item in ipairs(PendingRoutes) do
-    if item.data and item.data.n then MergeRoute(item.data); count=count+1 end
-  end
-  PendingWPs={}; PendingRoutes={}; SelPending=0
-  SavePending(); SetStatus("Approved all ("..count.." items)")
-elseif act=="rejectall" then
-  LoadPending()
-  local count=#PendingWPs+#PendingRoutes
-  PendingWPs={}; PendingRoutes={}; SelPending=0
-  SavePending(); SetStatus("Rejected all ("..count.." items)")
--- Theme picker actions
-elseif act=="open_theme"  then
+
+elseif cmd=="open_theme" then
   ShowThemePicker=true
   local sn=GetActiveProfileName()
   if databank and databank.getStringValue("orgtheme_p_"..sn)==""  then SaveTheme(sn,ThemeSlots) end
-elseif act=="theme_close" then ShowThemePicker=false
-elseif act=="theme_sel_elem" then PickerElem=d[2] or 1
-elseif act=="theme_set_hue" then
-  local h=d[2] or 0
+
+-- Legacy theme picker actions (via old ENC format, keep for backwards compat during transition)
+elseif cmd=="theme_close" then ShowThemePicker=false
+elseif cmd=="theme_sel_elem" then PickerElem=act[2] or 1
+elseif cmd=="theme_set_hue" then
+  local h=act[2] or 0
   ThemeSlots[PickerElem].h=h; RefreshTheme()
-elseif act=="theme_set_sv" then
-  local s,v=d[2] or 0.5, d[3] or 0.5
+elseif cmd=="theme_set_sv" then
+  local s,v=act[2] or 0.5, act[3] or 0.5
   ThemeSlots[PickerElem].s=math.max(0,math.min(1,s))
-  ThemeSlots[PickerElem].v=math.max(0,math.min(1,v))
-  RefreshTheme()
-elseif act=="theme_save" then
-  SaveTheme(GetActiveProfileName(),ThemeSlots)
-  SetStatus("Theme saved: "..GetActiveProfileName())
-elseif act=="theme_load" then
-  local name=d[2] or ""
+  ThemeSlots[PickerElem].v=math.max(0,math.min(1,v)); RefreshTheme()
+elseif cmd=="theme_save" then
+  SaveTheme(GetActiveProfileName(),ThemeSlots); SetStatus("Theme saved: "..GetActiveProfileName())
+elseif cmd=="theme_load" then
+  local name=act[2] or ""
   local raw2=databank and databank.getStringValue("orgtheme_p_"..name) or ""
   if raw2~="" then
     local ok2,data=pcall(json.decode,raw2)
@@ -1214,17 +1445,17 @@ elseif act=="theme_load" then
       SetStatus("Loaded: "..name)
     end
   else SetStatus("Profile not found: "..name) end
-elseif act=="theme_new" then
+elseif cmd=="theme_new" then
   local names=GetThemeProfiles()
   local newName="Theme "..#names+1
   SaveTheme(newName,ThemeSlots)
   SetStatus("Created: "..newName.." (chat: theme rename NAME)")
-elseif act=="theme_delete" then
+elseif cmd=="theme_delete" then
   local name=GetActiveProfileName()
   DeleteTheme(name)
   ThemeSlots=LoadTheme(); RefreshTheme()
   SetStatus("Deleted: "..name)
-elseif act=="theme_reset" then
+elseif cmd=="theme_reset" then
   ThemeSlots=DefaultOrgTheme(); RefreshTheme()
   SaveTheme(GetActiveProfileName(),ThemeSlots)
   SetStatus("Theme reset to defaults")
@@ -1261,6 +1492,35 @@ event=onInputText(text)
 args=*
 ]]
 local t=Trim(text); local lo=t:lower()
+
+-- Guided chat: if a screen button set a pending action, consume this input as the data
+if PendingAction~="" then
+  local pa=PendingAction; local pt=PendingTarget; PendingAction=""; PendingTarget=""
+  if pa=="add_wp" then
+    AddWP(t,""); SetStatus("WP added (no coords). Use SET COORDS to update.",8)
+  elseif pa=="rename" then
+    if ActiveView=="stops" and SelStop>0 then
+      for _,r in ipairs(RouteList) do
+        if r.n==SelRoute and r.pts[SelStop] then r.pts[SelStop].label=t; SaveData(); SetStatus("Stop renamed: "..t); break end
+      end
+    elseif SelWP~="" then RenameWP(SelWP,t)
+    elseif SelRoute~="" then RenameRoute(SelRoute,t) end
+  elseif pa=="set_coords" then
+    if ParsePos(t) then
+      if SelWP~="" then SetWPCoords(SelWP,t)
+      elseif SelStop>0 then
+        for _,r in ipairs(RouteList) do
+          if r.n==SelRoute and r.pts[SelStop] then r.pts[SelStop].c=t; SaveData(); SetStatus("Stop updated") end
+        end
+      end
+    else SetStatus("Bad coords — use ::pos{0,0,x,y,z}") end
+  elseif pa=="new_route" then
+    AddRoute(t)
+  elseif pa=="add_stop" then
+    if pt~="" then AddStop(pt,t) end
+  end
+  DrawScreen(); return
+end
 
 if lo=="help" then
   system.print("══════════════════════════════════")
@@ -1404,7 +1664,7 @@ if lo:sub(1,5)=="theme" then
   local arg=Trim(t:sub(6))
   local argLo=arg:lower()
 
-  if arg=="" then
+  if arg=="" or argLo=="show" or argLo=="list" then
     system.print("═══ THEME COLORS ════════════════════")
     for i=1,8 do
       local s=ThemeSlots[i]
@@ -1483,8 +1743,9 @@ if lo:sub(1,5)=="theme" then
   end
 
   -- theme import THEME:...
-  if arg:sub(1,6)=="THEME:" then
-    local iName,iSlots=ImportTheme(arg)
+  local importArg=arg:match("^[Ii][Mm][Pp][Oo][Rr][Tt]%s+(.+)") or arg
+  if importArg:sub(1,6)=="THEME:" then
+    local iName,iSlots=ImportTheme(importArg)
     if iName and iSlots then
       ThemeSlots=iSlots; SaveTheme(iName,iSlots); RefreshTheme()
       SetStatus("Imported: "..iName)

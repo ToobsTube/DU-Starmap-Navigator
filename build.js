@@ -10,47 +10,44 @@ const path = require('path');
 
 const CONFIGS = {
   ship_screen: {
-    output: 'Navigator_Ship_Screen_v2.1.txt',
+    // Slots 0-9 deliberately left unnamed: link Screen/Databank/Receiver/
+    // Emitter/navdatabank to ANY of them, in any order. The script
+    // auto-detects each by probing at startup (see slot=-1 onStart in
+    // src/ship_screen.lua) instead of relying on a fixed slot->role mapping.
+    output: 'Navigator_Ship_Screen_v2.2.txt',
     slots: {
-       '0': 'screen',   '1': 'databank',
-       '2': 'receiver', '3': 'emitter',
-       '4': 'navdatabank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
   },
   ship_noscreen: {
-    output: 'Navigator_Ship_NoScreen_v2.1.txt',
+    // Same auto-detect approach as ship_screen — see comment there.
+    output: 'Navigator_Ship_NoScreen_v2.2.txt',
     slots: {
-       '0': 'databank',
-       '1': 'receiver', '2': 'emitter',
-       '3': 'screen',   '4': 'navdatabank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
   },
   base: {
-    output: 'Navigator_Base_v2.1.txt',
+    // Same auto-detect approach as the ship PBs — see comment there.
+    output: 'Navigator_Base_v2.2.txt',
     slots: {
-       '0': 'screen',   '1': 'databank',
-       '2': 'receiver', '3': 'emitter',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
   },
   orgbase_admin: {
-    output: 'Navigator_OrgBase_Admin_v2.1.txt',
+    // Same auto-detect approach as the ship PBs — see comment there.
+    output: 'Navigator_OrgBase_Admin_v2.2.txt',
     slots: {
-       '0': 'screen',   '1': 'databank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
   },
   orgbase_sync: {
-    output: 'Navigator_OrgBase_Sync_v2.1.txt',
+    // Same auto-detect approach as the other four PBs — see comment there.
+    output: 'Navigator_OrgBase_Sync_v2.2.txt',
     slots: {
-       '0': 'screen',   '1': 'databank',
-       '2': 'receiver', '3': 'emitter',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
@@ -137,19 +134,20 @@ function build(sourceName, config) {
 
 const TOOLS = {
   databank_inspector: {
+    // Same auto-detect approach as the main PBs — see comment there.
     src: 'tools/databank_inspector.lua',
     output: 'tools/Databank_Inspector.txt',
     slots: {
-       '0': 'screen',   '1': 'databank',
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
     }
   },
   wipe_databanks: {
+    // Same auto-detect approach as the main PBs — wipes any/all linked
+    // databanks regardless of slot, so no role disambiguation needed at all.
     src: 'tools/wipe_databanks.lua',
     output: 'tools/Wipe_Databanks.txt',
     slots: {
-      '1': 'databank1', '2': 'databank2',
       '-1': 'unit', '-2': 'construct', '-3': 'player',
       '-4': 'system', '-5': 'library',
     }
@@ -191,7 +189,7 @@ console.log('\n=== Package ===');
 const { execSync } = require('child_process');
 const os = require('os');
 
-const VERSION    = 'v2.1';
+const VERSION    = 'v2.2';
 const STAGE_DIR  = path.join(os.tmpdir(), 'nav_release');
 const ZIP_OUT    = path.resolve(`dist/Navigator_${VERSION}.zip`);
 

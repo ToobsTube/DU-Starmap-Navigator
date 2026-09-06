@@ -1,12 +1,12 @@
 -- ================================================================
--- NAVIGATOR SHIP - NO SCREEN VERSION v2.1.0
+-- NAVIGATOR SHIP - NO SCREEN VERSION v2.2.0
 -- Dual Universe Navigation System
 --
--- SLOT CONNECTIONS (connect in this order):
---   Slot 0: databank   (Databank)
---   Slot 1: receiver   (Receiver)
---   Slot 2: emitter    (Emitter)
---   Slot 3: screen     (Screen Unit — OPTIONAL, for theme picker)
+-- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
+--   Required: Databank, Receiver, Emitter
+--   Optional: Screen Unit (for the theme picker), a 2nd Databank (Arch/Saga navdatabank)
+-- Check the Lua console after activating for a "[NAV] slot1=... slot2=..." line
+-- confirming what was detected as what.
 --
 -- Output via Lua chat. AR marker via system.setWaypoint().
 -- Alt+Up/Down = browse menu  |  Alt+Right = activate  |  Alt+Shift+Ins = toggle HUD
@@ -217,12 +217,11 @@ function LoadTheme()
   return data
 end
 
-function SaveTheme(name,slots)
+function StoreThemeProfile(name,slots)
   if not databank then return end
   name=name:gsub("[^%w%s_-]",""):sub(1,20)
   if name=="" then name="Default" end
   databank.setStringValue("theme_p_"..name,json.encode(slots))
-  databank.setStringValue("theme_profile_active",name)
   local raw=databank.getStringValue("theme_profile_names") or "[]"
   local ok,names=pcall(json.decode,raw)
   if not ok or type(names)~="table" then names={} end
@@ -230,6 +229,33 @@ function SaveTheme(name,slots)
   for _,n in ipairs(names) do if n==name then found=true;break end end
   if not found then table.insert(names,name) end
   databank.setStringValue("theme_profile_names",json.encode(names))
+  return name
+end
+
+function SaveTheme(name,slots)
+  local stored=StoreThemeProfile(name,slots)
+  if not databank or not stored then return end
+  databank.setStringValue("theme_profile_active",stored)
+end
+
+-- Store an incoming (network) profile without clobbering a differently-named
+-- collision — same name+same content is treated as already-known (no-op rename),
+-- same name+different content gets auto-suffixed ("Name-2", "Name-3", ...).
+function StoreThemeProfileDedup(name,slots)
+  if not databank then return end
+  name=name:gsub("[^%w%s_-]",""):sub(1,20)
+  if name=="" then name="Default" end
+  local encoded=json.encode(slots)
+  local finalName=name
+  if databank.getStringValue("theme_p_"..finalName)~="" and databank.getStringValue("theme_p_"..finalName)~=encoded then
+    local i=2
+    repeat
+      finalName=name.."-"..i
+      local existing=databank.getStringValue("theme_p_"..finalName)
+      i=i+1
+    until existing=="" or existing==encoded
+  end
+  return StoreThemeProfile(finalName,slots)
 end
 
 function DeleteTheme(name)
@@ -570,7 +596,171 @@ event=onStart()
 args=
 ]]
 
-local VERSION="v2.1.0"
+-- ── Slot auto-detect ────────────────────────────────────────────
+-- Link Databank, Receiver, Emitter to ANY of the PB's slots, in any order.
+-- Screen and a second Databank (Arch/Saga navdatabank) are optional and also
+-- go in any slot. Detected by probing each linked element with a harmless
+-- read-only call and seeing which one succeeds — same trick as
+-- tools/databank_copy.lua uses for its two databanks. Check the Lua console
+-- on startup ("[NAV] slot1=... slot2=...") to confirm what got detected.
+do
+  -- Primary check: DU's own type introspection. getElementClass() (confirmed
+  -- present on a "Modern Screen xs" via a live field dump, 2026-09-06)
+  -- logs a deprecation warning in-game telling scripts to use getClass()
+  -- instead — try that first, fall back to the deprecated name for older
+  -- game versions that might not have getClass() yet. Either way the
+  -- returned string gets a lowercase substring match, robust to exact
+  -- naming we haven't seen across other screen/receiver/emitter variants.
+  local function classOf(s)
+    local ok,cls=pcall(function() return s.getClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    ok,cls=pcall(function() return s.getElementClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    return nil
+  end
+  local function probe(s)
+    if not s then return nil end
+    local cls=classOf(s)
+    if cls then
+      if cls:find("screen")   then return "screen" end
+      if cls:find("databank") then return "databank" end
+      if cls:find("receiver") then return "receiver" end
+      if cls:find("emitter")  then return "emitter" end
+    end
+    -- Fallback for class names this doesn't recognize, or if
+    -- getElementClass() itself isn't available on some element. Previously
+    -- getRenderScript()/getScriptInput() were the primary screen check —
+    -- confirmed via that field dump that NEITHER getter actually exists on
+    -- a "Modern Screen xs" (only the setter halves do), which is why the
+    -- old capability-probe silently misclassified a real screen as
+    -- "unrecognized". getScriptOutput() (the real read counterpart DU
+    -- screens expose) is checked first here as the better fallback.
+    if pcall(function() return s.getScriptOutput() end)
+      or pcall(function() return s.getRenderScript() end)
+      or pcall(function() return s.getScriptInput() end) then return "screen" end
+    if pcall(function() return s.getChannelList() end) then return "receiver" end
+    if pcall(function() return s.getKeyList() end)      then return "databank" end
+    return "emitter"
+  end
+  -- Best-effort: read the element's in-game display name (works if you've
+  -- renamed it via right-click -> Rename). Wrapped in pcall so if this isn't
+  -- the right method on some element type, it just silently returns nil and
+  -- everything else still works — no risk from guessing wrong here.
+  local function tryName(s)
+    local ok,n=pcall(function() return s.getName() end)
+    if ok and n and n~="" then return n end
+    return nil
+  end
+  -- Literal slotN references only — DU's sandbox does not support building
+  -- these names dynamically (e.g. _ENV["slot"..i]) and silently fails.
+  -- Players connect by clicking the PB then the element (DU fills the lowest
+  -- free slot automatically), so linked slots are always contiguous from 1 —
+  -- plain ipairs is fine here, no gaps to worry about.
+  local raw={slot1,slot2,slot3,slot4,slot5,slot6,slot7,slot8,slot9,slot10}
+  local banks={}
+  for i,s in ipairs(raw) do
+    local kind=probe(s)
+    if kind=="databank" then table.insert(banks,s)
+    elseif kind=="receiver" and not receiver then receiver=s
+    elseif kind=="emitter"  and not emitter  then emitter=s
+    elseif kind=="screen"   and not screen   then screen=s
+    end
+  end
+  if #banks==1 then
+    databank=banks[1]
+  elseif #banks>=2 then
+    -- Two databanks linked. Prefer a naming hint first — rename the Arch/Saga
+    -- databank in-game to include "arch", "saga", "hud", or "nav2" and it's
+    -- recognized regardless of contents. Otherwise fall back to whichever
+    -- already holds Navigator's own keys, and finally to slot order if both
+    -- are blank and unnamed (first found = primary).
+    local function looksLikeHudBank(s)
+      local nm=tryName(s)
+      if not nm then return false end
+      local lo=nm:lower()
+      return lo:find("arch") or lo:find("saga") or lo:find("hud") or lo:find("nav2")
+    end
+    local navKeys={"personal_wps","theme_profile_active","theme_profile_names","org_names"}
+    local function looksPrimary(d)
+      for _,k in ipairs(navKeys) do
+        local ok,v=pcall(function() return d.getStringValue(k) end)
+        if ok and v and v~="" then return true end
+      end
+      return false
+    end
+    -- Real Arch/Saga data is just as valid a positive signal for navdatabank
+    -- as Navigator's own keys are for primary — check for it explicitly so
+    -- an actually-in-use HUD databank isn't mistaken for foreign/wrong data.
+    local hudKeys={"SavedLocations","SagaRoutes","SagaConf"}
+    local function looksLikeHudData(d)
+      for _,k in ipairs(hudKeys) do
+        local ok,v=pcall(function() return d.getStringValue(k) end)
+        if ok and v and v~="" then return true end
+      end
+      -- Arch stores a large number of keys with "Auto" in the name (per a
+      -- live Databank_Inspector dump, 2026-09-06) — we don't know every
+      -- exact key it uses, so scan the key list itself rather than relying
+      -- on a fixed candidate list. (Navigator's own "autofly" key on
+      -- navdatabank also matches this — harmless, since that key only ever
+      -- gets written to the navdatabank side anyway.)
+      local ok,list=pcall(function() return d.getKeyList() end)
+      if ok and type(list)=="table" then
+        for _,k in ipairs(list) do
+          if tostring(k):lower():find("auto") then return true end
+        end
+      end
+      return false
+    end
+    -- Distinguishes "genuinely blank" from "has SOME data, just not ours or
+    -- Arch/Saga's" — e.g. a databank reused from another script. The latter
+    -- is worth flagging louder since it suggests the wrong element may be
+    -- linked, not just an ambiguous fresh install.
+    local function hasAnyData(d)
+      local ok,list=pcall(function() return d.getKeyList() end)
+      return ok and type(list)=="table" and #list>0
+    end
+    local pickedBy
+    if looksLikeHudBank(banks[2]) and not looksLikeHudBank(banks[1]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="name"
+    elseif looksLikeHudBank(banks[1]) and not looksLikeHudBank(banks[2]) then
+      databank=banks[2]; navdatabank=banks[1]; pickedBy="name"
+    elseif looksPrimary(banks[2]) and not looksPrimary(banks[1]) then
+      databank=banks[2]; navdatabank=banks[1]; pickedBy="contents"
+    elseif looksPrimary(banks[1]) and not looksPrimary(banks[2]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="contents"
+    elseif looksLikeHudData(banks[2]) and not looksLikeHudData(banks[1]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="contents"
+    elseif looksLikeHudData(banks[1]) and not looksLikeHudData(banks[2]) then
+      databank=banks[2]; navdatabank=banks[1]; pickedBy="contents"
+    elseif hasAnyData(banks[1]) or hasAnyData(banks[2]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="foreign-data"
+    else
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="guess"
+    end
+    -- SlotWarningMsg is a plain global (not local) so the code further down
+    -- this same handler — after StatusMsg="" resets it — can pick it up and
+    -- show it on the AR HUD too, not just the Lua console. See below.
+    if pickedBy=="guess" then
+      system.print("[NAV] NOTE: 2 databanks linked, both blank and unnamed — guessed which is which by slot order (see below). If that's backwards, rename the Arch/Saga one in-game (right-click -> Rename) to include \"arch\", \"saga\", or \"hud\", then reactivate the PB.")
+      SlotWarningMsg="Check console: DB guess"
+    elseif pickedBy=="foreign-data" then
+      system.print("[NAV] WARNING: 2 databanks linked, but one has existing data that isn't Navigator's or Arch/Saga's — double check the right elements are linked (see slot list below) before trusting this setup. Guessed by slot order for now.")
+      SlotWarningMsg="Check console: DB link?"
+    end
+  end
+  local dbg={}
+  for i,s in ipairs(raw) do
+    local role=(s==databank and "databank") or (s==navdatabank and "navdatabank")
+      or (s==receiver and "receiver") or (s==emitter and "emitter")
+      or (s==screen and "screen") or "unrecognized"
+    local nm=tryName(s)
+    local cls=(role=="unrecognized") and classOf(s) or nil
+    table.insert(dbg,"slot"..i.."="..role..(nm and ("("..nm..")") or "")..(cls and ("[class:"..cls.."]") or ""))
+  end
+  system.print("[NAV] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
+end
+
+local VERSION="v2.2.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 CalcSpeed   =30000    --export: Time Calc max speed in space in km/h (e.g. 30000)
@@ -597,11 +787,14 @@ SyncContext    = "personal"  -- routing target during a base sync ("personal" or
 SyncingChannel = ""          -- channel open for duration of active org sync
 SectionIdx     = 1           -- left-panel category index
 SubIdx         = 0           -- 0=left panel focused, 1+=right panel item
+ActionPanelOpen= false       -- true when the 3rd action panel is visible
+ActionIdx      = 1           -- selected action index in the action panel
 AtlasSearch    = ""
 L_ALT          = false
 HUD_VISIBLE    = true
 StatusMsg      = ""
 StatusExpiry   = 0
+if SlotWarningMsg then SetStatus(SlotWarningMsg,20) end
 PushQueue    = {}
 PushQueueCh  = ""
 PushQueueIdx = 1
@@ -857,7 +1050,7 @@ end
 
 function RequestSync(ch)
   if not emitter then SetStatus("No emitter") return end
-  SyncingChannel=ch; UpdateChannels()
+  if ch~=BaseChannel then SyncingChannel=ch; UpdateChannels() end
   emitter.send(ch,"<RequestSync>"..ShipID.."|pid:"..GetPlayerID().."|pname:"..GetPlayerName())
   SetStatus("Sync requested on "..ch)
 end
@@ -920,12 +1113,26 @@ function GetSubItems()
   local cp=GetCurrentPos()
   local sec=SECTIONS[SectionIdx]
 
-  if sec=="WP" then
-    for _,wp in ipairs(PersonalWPs) do
-      local tp=ParsePos(wp.c)
-      local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
-      table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx="personal",lk=wp.lk})
+  local function addWPWithPrint(wp, ctx)
+    local tp=ParsePos(wp.c)
+    local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
+    table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx=ctx,lk=wp.lk})
+    if wp.c and wp.c~="" then
+      table.insert(items,{type="wp_coords",c=wp.c})
     end
+  end
+  local function addRouteWithPrint(r, ctx)
+    table.insert(items,{type="route",n=r.n,stops=#r.pts,ctx=ctx})
+    for i,s in ipairs(r.pts or {}) do
+      local tp=ParsePos(s.c)
+      local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
+      local lbl=(s.label and s.label~="") and s.label or ("Stop "..i)
+      table.insert(items,{type="stop",n=lbl,c=s.c,dist=d,idx=i,total=#r.pts,routeName=r.n,ctx=ctx})
+    end
+  end
+
+  if sec=="WP" then
+    for _,wp in ipairs(PersonalWPs) do addWPWithPrint(wp,"personal") end
     if #items==0 then table.insert(items,{type="info",label="No waypoints  —  type: add NAME"}) end
 
   elseif sec=="ORG" then
@@ -938,17 +1145,11 @@ function GetSubItems()
       local orts=(OrgData[ActiveOrg] and OrgData[ActiveOrg].routes) or {}
       if #owps>0 then
         table.insert(items,{type="hdr",label="WPs"})
-        for _,wp in ipairs(owps) do
-          local tp=ParsePos(wp.c)
-          local d=(cp and tp) and FormatDist(CalcDist(cp,tp)) or "---"
-          table.insert(items,{type="wp",n=wp.n,c=wp.c,dist=d,ctx=ActiveOrg,lk=wp.lk})
-        end
+        for _,wp in ipairs(owps) do addWPWithPrint(wp,ActiveOrg) end
       end
       if #orts>0 then
         table.insert(items,{type="hdr",label="ROUTES"})
-        for _,r in ipairs(orts) do
-          table.insert(items,{type="route",n=r.n,stops=#r.pts,ctx=ActiveOrg})
-        end
+        for _,r in ipairs(orts) do addRouteWithPrint(r,ActiveOrg) end
       end
       if #owps==0 and #orts==0 then
         table.insert(items,{type="info",label="No data — Sync, or: add NAME"})
@@ -967,9 +1168,7 @@ function GetSubItems()
     end
 
   elseif sec=="ROUTES" then
-    for _,r in ipairs(PersonalRoutes) do
-      table.insert(items,{type="route",n=r.n,stops=#r.pts,ctx="personal"})
-    end
+    for _,r in ipairs(PersonalRoutes) do addRouteWithPrint(r,"personal") end
     if #items==0 then table.insert(items,{type="info",label="No routes  —  type: newroute NAME"}) end
 
   elseif sec=="SETTINGS" then
@@ -1053,9 +1252,65 @@ end
 function GetSelectable(items)
   local sel={}
   for i,v in ipairs(items) do
-    if v.type~="hdr" and v.type~="info" then table.insert(sel,{i=i,v=v}) end
+    if v.type~="hdr" and v.type~="info" and v.type~="wp_coords" then table.insert(sel,{i=i,v=v}) end
   end
   return sel
+end
+
+function GetCurrentItem()
+  local items=GetSubItems(); local sel=GetSelectable(items)
+  local idx=math.min(SubIdx,#sel)
+  if idx<1 then return nil end
+  return sel[idx].v
+end
+
+-- Returns action list for items that open the action panel; nil = direct execute
+function GetActions(item)
+  if item.type=="wp" then
+    return {{label="Navigate",key="nav"},{label="Print Coords",key="print"}}
+  elseif item.type=="route" then
+    return {{label="Navigate Route",key="nav"},{label="Print Stops",key="print"}}
+  elseif item.type=="stop" then
+    return {{label="Navigate Stop",key="nav"}}
+  elseif item.type=="atlas" then
+    return {{label="Navigate",key="nav"}}
+  end
+  return nil
+end
+
+function ExecuteAction(item, actionKey)
+  if actionKey=="nav" then
+    if item.type=="wp" then
+      ActiveContext=item.ctx; SetNavWP(item.n)
+    elseif item.type=="route" then
+      ActiveContext=item.ctx; SetNavRoute(item.n,1)
+    elseif item.type=="stop" then
+      ActiveContext=item.ctx; SetNavRoute(item.routeName,item.idx)
+    elseif item.type=="atlas" then
+      NavTarget={t="wp",n=item.n,c=item.c}
+      SaveData(); UpdateWaypoint(); SendAutopilot(item.n,item.c)
+      SetStatus("Navigating: "..item.n)
+    end
+  elseif actionKey=="print" then
+    if item.type=="wp" then
+      system.print("[WP] "..item.n)
+      system.print(item.c or "no coords")
+      SetStatus("Printed: "..item.n)
+    elseif item.type=="route" then
+      local routes=item.ctx=="personal" and PersonalRoutes
+                   or (OrgData[item.ctx] and OrgData[item.ctx].routes) or {}
+      for _,r in ipairs(routes) do
+        if r.n:lower()==item.n:lower() then
+          system.print("[ROUTE] "..r.n.."  ("..#r.pts.." stops)")
+          for i,s in ipairs(r.pts) do
+            local lbl=(s.label and s.label~="") and s.label or ("Stop "..i)
+            system.print("  "..i..".  "..lbl); system.print(s.c)
+          end; break
+        end
+      end
+      SetStatus("Printed: "..item.n)
+    end
+  end
 end
 
 function DrawHUD()
@@ -1064,6 +1319,7 @@ function DrawHUD()
   local sc=H/1080
   local lw=math.floor(185*sc)
   local rw=math.floor(290*sc)
+  local aw=math.floor(180*sc)
   local gap=math.floor(5*sc)
   local px=math.floor(W*(HudPX/100)); local py=math.floor(H*(HudPY/100))
   local fs=math.floor(13*sc); local fsS=math.floor(11*sc); local fsH=math.floor(12*sc)
@@ -1073,11 +1329,12 @@ function DrawHUD()
   local sel=GetSelectable(items)
   local clampedSub=math.min(SubIdx,#sel)
 
-  -- build selectable index map: items[i] → which # in sel list
+  -- build selectable index map: items[i] → which # in sel list, and reverse
   local selIdxMap={}
+  local selToItem={}
   local si=0
   for i,v in ipairs(items) do
-    if v.type~="hdr" and v.type~="info" then si=si+1; selIdxMap[i]=si end
+    if v.type~="hdr" and v.type~="info" and v.type~="wp_coords" then si=si+1; selIdxMap[i]=si; selToItem[si]=i end
   end
 
   -- ── Theme-derived CSS colors ────────────────────────────────────
@@ -1115,6 +1372,8 @@ function DrawHUD()
 .nav{font-family:Arial;font-size:%dpx;color:%s;padding:3px 8px;background:%s;border-bottom:1px solid %s;white-space:nowrap;overflow:hidden;}
 .ft{font-family:Arial;font-size:%dpx;color:%s;text-align:center;padding:2px 4px;border-top:1px solid %s;}
 .st{color:rgb(255,178,50);}
+.ap{position:absolute;top:%dpx;left:%dpx;width:%dpx;background:%s;border:1px solid %s;border-radius:4px;overflow:hidden;}
+.asel{background:%s;}
 </style>]],
     py,cBg,cBd,
     px,lw,
@@ -1129,7 +1388,9 @@ function DrawHUD()
     cSl,
     cA,ls15,
     fsH,cA,cNB,cBd,
-    fsS,cFt,cDv)
+    fsS,cFt,cDv,
+    py,px+lw+gap+rw+gap,aw,cBg,cBd,
+    cSl)
 
   -- ── LEFT PANEL ───────────────────────────────────────────────
   h[#h+1]='<div class="lp">'
@@ -1168,11 +1429,12 @@ function DrawHUD()
   if secLabel=="ORG" and ActiveOrg then secLabel="ORG  &#8250;  "..ActiveOrg end
   h[#h+1]=string.format('<div class="ph">&#8592; %s</div>', secLabel)
 
-  -- scroll window
+  -- scroll window: center around the actual item position of the selected entry
   local vis=9
   local winStart=1
-  if clampedSub>0 then
-    winStart=math.max(1,clampedSub-math.floor(vis/2))
+  if clampedSub>0 and selToItem[clampedSub] then
+    local selItemIdx=selToItem[clampedSub]
+    winStart=math.max(1,selItemIdx-math.floor(vis/2))
     winStart=math.min(winStart,math.max(1,#items-vis+1))
   end
   local winEnd=math.min(#items,winStart+vis-1)
@@ -1191,16 +1453,29 @@ function DrawHUD()
       local lkBadge=item.lk and string.format(' <span style="color:%s;font-size:%dpx">LK</span>',cA,fsS) or ""
       h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s%s</span><span><span style="opacity:0.65">%s</span><span class="arr">&#62;</span></span></div>',
         cls, sIdx, item.n:sub(1,18), lkBadge, item.dist or "---")
+    elseif item.type=="wp_coords" then
+      h[#h+1]=string.format('<div style="font-family:monospace;font-size:%dpx;color:rgba(140,170,215,0.5);padding:0 10px 2px 22px;white-space:nowrap;overflow:hidden;">%s</div>',
+        fsS, item.c or "")
     elseif item.type=="route" then
       local cls="rr rrt"..(isSel and " rsel" or "")
       h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.65">%d stops</span><span class="arr">&#62;</span></span></div>',
         cls, sIdx, item.n:sub(1,18), item.stops or 0)
+    elseif item.type=="stop" then
+      local cls="rr rw"..(isSel and " rsel" or "")
+      local opacity=isSel and "1" or "0.75"
+      h[#h+1]=string.format('<div class="%s" style="opacity:%s"><span><span class="num">%d</span>&#8627; %d. %s</span><span><span style="opacity:0.65">%s</span><span class="arr">&#62;</span></span></div>',
+        cls, opacity, sIdx, item.idx, item.n:sub(1,14), item.dist or "---")
     elseif item.type=="atlas" then
       local cls="rr rw"..(isSel and " rsel" or "")
       local cp2=GetCurrentPos(); local tp=ParsePos(item.c)
       local d=(cp2 and tp) and FormatDist(CalcDist(cp2,tp)) or "---"
       h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.65">%s</span><span class="arr">&#62;</span></span></div>',
         cls, sIdx, item.n:sub(1,18), d)
+    elseif item.type=="print_wp" or item.type=="print_rt" then
+      local cls="rr"..(isSel and " rsel" or "")
+      local style=isSel and "" or ' style="opacity:0.55;font-style:italic;"'
+      h[#h+1]=string.format('<div class="%s"%s><span>%s</span><span class="arr">&#62;</span></div>',
+        cls, style, item.label or "PRINT")
     elseif item.type=="time" then
       local cls="rr rw"
       h[#h+1]=string.format('<div class="%s"><span>%s</span><span style="opacity:0.75">%s</span></div>',
@@ -1221,10 +1496,33 @@ function DrawHUD()
     h[#h+1]='<div class="ft">Alt &#8592; to go back</div>'
   elseif SubIdx==0 then
     h[#h+1]='<div class="ft">Alt &#8594; to enter &nbsp;|&nbsp; Alt &#8592; = back</div>'
+  elseif ActionPanelOpen then
+    h[#h+1]='<div class="ft">&#8594; Alt &#8594; &nbsp;|&nbsp; Alt &#8592; = back</div>'
   else
-    h[#h+1]=string.format('<div class="ft">%d / %d &nbsp;|&nbsp; Alt &#8592; = back</div>', clampedSub, #sel)
+    h[#h+1]=string.format('<div class="ft">%d / %d &nbsp;|&nbsp; Alt &#8594; = actions</div>', clampedSub, #sel)
   end
   h[#h+1]='</div>'
+
+  -- ── ACTION PANEL (3rd column) ─────────────────────────────────
+  if ActionPanelOpen and clampedSub>0 then
+    local curItem=sel[clampedSub] and sel[clampedSub].v
+    local actions=curItem and GetActions(curItem)
+    if curItem and actions then
+      h[#h+1]='<div class="ap">'
+      h[#h+1]=string.format('<div class="ph">%s</div>', curItem.n:sub(1,20))
+      if (curItem.type=="wp" or curItem.type=="stop") and curItem.c and curItem.c~="" then
+        h[#h+1]=string.format('<div class="ri" style="font-family:monospace;font-size:%dpx;word-break:break-all;">%s</div>', fsS, curItem.c)
+      end
+      for i,act in ipairs(actions) do
+        local isSel=(i==ActionIdx)
+        local cls="rr ra"..(isSel and " asel" or "")
+        local arrow=isSel and "&#9658;" or "&nbsp;&nbsp;"
+        h[#h+1]=string.format('<div class="%s"><span>%s %s</span><span class="arr">&#62;</span></div>', cls, arrow, act.label)
+      end
+      h[#h+1]='<div class="ft">&#8593;&#8595; Alt &nbsp;|&nbsp; &#8594; Alt &#8594;</div>'
+      h[#h+1]='</div>'
+    end
+  end
 
   system.setScreen(table.concat(h))
   system.showScreen(1)
@@ -1237,20 +1535,28 @@ function ActivateMenuItem()
     if #sel>0 then SubIdx=1 end
     DrawHUD(); return
   end
-  local items=GetSubItems(); local sel=GetSelectable(items)
-  local clampedSub=math.min(SubIdx,#sel)
-  if clampedSub<1 then DrawHUD(); return end
-  local item=sel[clampedSub].v
-  if item.type=="atlas" then
-    NavTarget={t="wp",n=item.n,c=item.c}
-    SaveData(); UpdateWaypoint()
-    SendAutopilot(item.n, item.c)
-    SetStatus("Navigating: "..item.n)
-  elseif item.type=="wp" then
-    ActiveContext=item.ctx; SetNavWP(item.n)
-  elseif item.type=="route" then
-    ActiveContext=item.ctx; SetNavRoute(item.n,1)
-  elseif item.type=="mark_wp" then
+  -- If action panel is open, execute the selected action
+  if ActionPanelOpen then
+    local item=GetCurrentItem()
+    if item then
+      local actions=GetActions(item)
+      if actions and ActionIdx<=#actions then
+        ExecuteAction(item, actions[ActionIdx].key)
+      end
+    end
+    ActionPanelOpen=false; ActionIdx=1
+    DrawHUD(); return
+  end
+  -- Otherwise check if this item type opens the action panel
+  local item=GetCurrentItem()
+  if not item then DrawHUD(); return end
+  local actions=GetActions(item)
+  if actions then
+    ActionPanelOpen=true; ActionIdx=1
+    DrawHUD(); return
+  end
+  -- Direct-execute items (no action panel)
+  if item.type=="mark_wp" then
     local p=GetCurrentPosStr()
     if p then AddWP(AutoName("WP",ContextWPs()),p) else SetStatus("No position") end
   elseif item.type=="next_stop"  then NextStop()
@@ -1500,7 +1806,11 @@ event=onActionStart(action)
 args="up"
 ]]
 if not L_ALT then return end
-if SubIdx==0 then
+if ActionPanelOpen then
+  local item=GetCurrentItem(); local actions=item and GetActions(item) or {}
+  ActionIdx=math.max(1,ActionIdx-1)
+elseif SubIdx==0 then
+  ActionPanelOpen=false; ActionIdx=1
   SectionIdx=math.max(1,SectionIdx-1); ActiveOrg=nil; ActiveContext="personal"
 else
   local items=GetSubItems(); local sel=GetSelectable(items)
@@ -1515,7 +1825,11 @@ event=onActionStart(action)
 args="down"
 ]]
 if not L_ALT then return end
-if SubIdx==0 then
+if ActionPanelOpen then
+  local item=GetCurrentItem(); local actions=item and GetActions(item) or {}
+  ActionIdx=math.min(#actions,ActionIdx+1)
+elseif SubIdx==0 then
+  ActionPanelOpen=false; ActionIdx=1
   SectionIdx=math.min(#SECTIONS,SectionIdx+1); ActiveOrg=nil; ActiveContext="personal"
 else
   local items=GetSubItems(); local sel=GetSelectable(items)
@@ -1539,7 +1853,9 @@ event=onActionStart(action)
 args="strafeleft"
 ]]
 if not L_ALT then return end
-if SECTIONS[SectionIdx]=="ORG" and ActiveOrg then
+if ActionPanelOpen then
+  ActionPanelOpen=false; ActionIdx=1
+elseif SECTIONS[SectionIdx]=="ORG" and ActiveOrg then
   ActiveOrg=nil; ActiveContext="personal"; SubIdx=1
 else
   SubIdx=0
@@ -1589,7 +1905,7 @@ if message:find("<OrgSyncStart>",1,true) then
   SyncContext=orgName
 end
 if message:find("<SyncCount>",1,true) then
-  SyncReceived=0; SyncContext="personal"
+  SyncReceived=0; SyncContext="personal"; SyncOrgName=""
   SetStatus("Syncing from "..(isOrg and (SyncOrgName~="" and SyncOrgName or "org") or "base").."...")
 end
 if message:find("<SyncWP>",1,true) then
@@ -1631,6 +1947,14 @@ if message:find("<SyncRoute>",1,true) then
     local found=false
     for i,e in ipairs(list) do if e.n:lower()==r.n:lower() then list[i]=r;found=true;break end end
     if not found then table.insert(list,r) end
+  end
+end
+if message:find("<SyncTheme>",1,true) then
+  local raw=message:gsub("<SyncTheme>",""):gsub("@@@",'"')
+  local ok,th=pcall(json.decode,raw)
+  if ok and th and th.n and th.slots and #th.slots==8 then
+    SyncReceived=(SyncReceived or 0)+1
+    StoreThemeProfileDedup(th.n,th.slots)
   end
 end
 if message:find("<SyncDenied>",1,true) then
@@ -1714,6 +2038,7 @@ if lo=="help" then
   system.print("theme profiles     list saved profiles")
   system.print("theme export       export as copyable string")
   system.print("theme import T:..  import from string")
+  system.print("theme push         send theme to base (no copy/paste — pulled on next sync)")
   system.print("theme reset        restore defaults")
   system.print("Alt+Up/Down = browse  |  Alt+Right = activate"..
     (screen and "  |  Alt+0 = theme picker" or ""))
@@ -1984,7 +2309,7 @@ if lo:sub(1,5)=="theme" then
   local arg=Trim(t:sub(6))
   local argLo=arg:lower()
 
-  if arg=="" then
+  if arg=="" or argLo=="show" or argLo=="list" then
     system.print("═══ THEME COLORS ════════════════════")
     for i=1,8 do
       local s=ThemeSlots[i]
@@ -1995,7 +2320,7 @@ if lo:sub(1,5)=="theme" then
     end
     system.print("  Profile: "..GetActiveProfileName())
     system.print("  theme ELEMENT #HEX | R G B")
-    system.print("  theme save/load/delete/profiles/export/import/reset/rename")
+    system.print("  theme save/load/delete/profiles/export/import/push/reset/rename")
     DrawHUD(); return
   end
 
@@ -2063,13 +2388,23 @@ if lo:sub(1,5)=="theme" then
   end
 
   -- theme import THEME:...
-  if arg:sub(1,6)=="THEME:" then
-    local iName,iSlots=ImportTheme(arg)
+  local importArg=arg:match("^[Ii][Mm][Pp][Oo][Rr][Tt]%s+(.+)") or arg
+  if importArg:sub(1,6)=="THEME:" then
+    local iName,iSlots=ImportTheme(importArg)
     if iName and iSlots then
       ThemeSlots=iSlots; SaveTheme(iName,iSlots); RefreshTheme()
       SetStatus("Imported: "..iName)
     else SetStatus("Invalid import string") end
     DrawHUD(); DrawPickerScreen(); return
+  end
+
+  -- theme push (send active theme to base, no chat copy/paste needed)
+  if argLo=="push" then
+    if not emitter then SetStatus("No emitter") else
+      emitter.send(BaseChannel,"<PushTheme>"..json.encode({n=GetActiveProfileName(),slots=ThemeSlots}):gsub('"',"@@@"))
+      SetStatus("Theme pushed to base: "..GetActiveProfileName())
+    end
+    DrawHUD(); return
   end
 
   -- theme reset

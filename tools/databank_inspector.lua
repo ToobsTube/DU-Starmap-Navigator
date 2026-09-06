@@ -3,14 +3,18 @@
 -- Reads all keys from a linked databank and displays them on screen.
 -- Useful for inspecting what another HUD stores in its databank.
 --
--- SLOT CONNECTIONS:
---   Slot 0: screen    (Screen Unit)
---   Slot 1: databank  (Databank — link the HUD's databank here)
+-- SLOT CONNECTIONS: link a Screen Unit and the Databank you want to inspect
+-- to ANY of the PB's slots, in any order — auto-detected at startup. Check
+-- the Lua console after activating for a "[INSP] slot1=..." line confirming
+-- what was detected as what.
 --
 -- USAGE:
---   Just turn it on. Screen shows all keys and their values.
+--   Just turn it on. Screen shows all keys and their values, PAGE_SIZE per
+--   page (a databank can hold hundreds of keys — a Screen Unit's input is
+--   capped at 1024 characters, so only the current page is ever sent).
 --   Type a key name in Lua chat to search/filter.
 --   Type "clear" to reset the filter.
+--   Type "next" / "prev" to page through results.
 -- ================================================================
 
 --[[@
@@ -22,8 +26,10 @@ local raw=getInput() or ""
 local lines={}; for ln in raw:gmatch("[^\n]+") do table.insert(lines,ln) end
 local FILTER=(lines[1] or "F:"):sub(3)
 local PAGE=tonumber((lines[2] or "P:1"):sub(3)) or 1
+local TOTALP=tonumber((lines[3] or "T:1"):sub(3)) or 1
+local TOTALN=tonumber((lines[4] or "N:0"):sub(3)) or 0
 local KEYS={}
-for i=3,#lines do
+for i=5,#lines do
   local k,t,v=lines[i]:match("^([^|]*)|([^|]*)|?(.*)")
   if k then table.insert(KEYS,{k=k,t=t,v=v or ""}) end
 end
@@ -49,7 +55,7 @@ setNextFillColor(Lbg,0,0.005,0.03,1) addBox(Lbg,0,0,SW,SH)
 setNextFillColor(Lp,0,0.04,0.16,1) addBox(Lp,0,0,SW,C)
 setNextTextAlign(Lx,AlignH_Left,AlignV_Middle)
 addText(Lx,fB,"DATABANK INSPECTOR",8,C/2)
-local info=(FILTER~="" and "filter: "..FILTER.."  |  " or "").."total: "..#KEYS.." keys"
+local info=(FILTER~="" and "filter: "..FILTER.."  |  " or "").."total: "..TOTALN.." keys"
 setNextFillColor(Lt,0.45,0.45,0.65,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
 addText(Lt,fS,info,SW-8,C/2)
 
@@ -66,14 +72,13 @@ addText(Lh,fT,"VALUE",KW+8,HY+C/2)
 setNextStrokeColor(Lp,0.15,0.32,0.62,0.6) setNextStrokeWidth(Lp,1)
 addLine(Lp,KW,HY,KW,SH-C)
 
--- Rows
+-- Rows — KEYS already holds just the current page (sliced on the controller
+-- side to respect the Screen Unit's 1024-char input limit), so draw them
+-- straight through with no further windowing here.
 local rowY=C*2
-local vis=math.floor((SH-C*3)/C)
-local startI=(PAGE-1)*vis+1
-local endI=math.min(#KEYS,startI+vis-1)
-for i=startI,endI do
+for i=1,#KEYS do
   local entry=KEYS[i]
-  local ry=rowY+(i-startI)*C
+  local ry=rowY+(i-1)*C
   local isEven=(i%2==0)
   if isEven then
     setNextFillColor(Lp,0,0.02,0.08,0.4) addBox(Lp,0,ry,SW,C)
@@ -90,25 +95,22 @@ for i=startI,endI do
   setNextFillColor(Lt,1,1,1,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
   addText(Lt,fS,tc,KW-13,ry+C/2)
   -- Value
-  local val=entry.v or ""
-  if #val>200 then val=val:sub(1,197).."..." end
   setNextFillColor(Lt,0.80,0.80,0.80,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
-  addText(Lt,fS,val,KW+8,ry+C/2)
+  addText(Lt,fS,entry.v,KW+8,ry+C/2)
   -- row divider
   setNextStrokeColor(Lp,0.10,0.22,0.44,0.3) setNextStrokeWidth(Lp,1)
   addLine(Lp,0,ry+C,SW,ry+C)
 end
 
-if #KEYS==0 then
+if TOTALN==0 then
   setNextFillColor(Lt,0.35,0.35,0.55,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
   addText(Lt,fH,"Databank is empty or not linked",SW/2,SH/2)
 end
 
 -- Footer
-local totalPages=math.max(1,math.ceil(#KEYS/vis))
 setNextFillColor(Lp,0,0.03,0.12,1) addBox(Lp,0,SH-C,SW,C)
 setNextFillColor(Lt,0.40,0.40,0.60,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-addText(Lt,fS,"Page "..PAGE.." / "..totalPages.."   |   chat: type key name to filter  |  'clear' to reset  |  'next' / 'prev' to page",SW/2,SH-C/2)
+addText(Lt,fS,"Page "..PAGE.." / "..TOTALP.."   |   chat: type key name to filter  |  'clear' to reset  |  'next' / 'prev' to page",SW/2,SH-C/2)
 requestAnimationFrame(60)
 ]]
 
@@ -117,6 +119,69 @@ requestAnimationFrame(60)
 slot=-1
 event=onStart()
 ]]
+-- Slot auto-detect: link Screen and Databank to ANY slot, in any order.
+do
+  -- Primary check: DU's own type introspection. getElementClass() (confirmed
+  -- present on a "Modern Screen xs" via a live field dump, 2026-09-06)
+  -- logs a deprecation warning in-game telling scripts to use getClass()
+  -- instead — try that first, fall back to the deprecated name for older
+  -- game versions that might not have getClass() yet. Either way the
+  -- returned string gets a lowercase substring match, robust to exact
+  -- naming we haven't seen across other screen/databank variants.
+  local function classOf(s)
+    local ok,cls=pcall(function() return s.getClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    ok,cls=pcall(function() return s.getElementClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    return nil
+  end
+  local function probe(s)
+    if not s then return nil end
+    local cls=classOf(s)
+    if cls then
+      if cls:find("screen")   then return "screen" end
+      if cls:find("databank") then return "databank" end
+    end
+    -- Fallback for class names this doesn't recognize, or if
+    -- getElementClass() itself isn't available on some element.
+    if pcall(function() return s.getScriptOutput() end)
+      or pcall(function() return s.getRenderScript() end)
+      or pcall(function() return s.getScriptInput() end) then return "screen" end
+    if pcall(function() return s.getKeyList() end) then return "databank" end
+    return nil
+  end
+  local function tryName(s)
+    local ok,n=pcall(function() return s.getName() end)
+    if ok and n and n~="" then return n end
+    return nil
+  end
+  -- Literal slotN references only — DU's sandbox does not support building
+  -- these names dynamically (e.g. _ENV["slot"..i]) and silently fails.
+  local raw={slot1,slot2,slot3,slot4,slot5,slot6,slot7,slot8,slot9,slot10}
+  for i,s in ipairs(raw) do
+    local kind=probe(s)
+    if kind=="databank" and not databank then databank=s
+    elseif kind=="screen" and not screen then screen=s
+    end
+  end
+  local dbg={}
+  for i,s in ipairs(raw) do
+    local role=(s==databank and "databank") or (s==screen and "screen") or "unrecognized"
+    local nm=tryName(s)
+    local cls=(role=="unrecognized") and classOf(s) or nil
+    table.insert(dbg,"slot"..i.."="..role..(nm and ("("..nm..")") or "")..(cls and ("[class:"..cls.."]") or ""))
+  end
+  system.print("[INSP] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
+end
+
+-- Screen Unit input is capped at 1024 characters, and a databank can easily
+-- hold 100+ keys — PAGE_SIZE keeps each page's serialized payload well under
+-- that limit regardless of key/value length. Both the key and value strings
+-- are also truncated per-row for the same reason.
+PAGE_SIZE = 10
+KEY_MAX   = 30
+VAL_MAX   = 45
+
 Filter  = ""
 Page    = 1
 Keys    = {}
@@ -149,10 +214,16 @@ end
 
 function PushScreen()
   if not screen then return end
-  local lines={"F:"..Filter,"P:"..Page}
-  for _,e in ipairs(Keys) do
-    local v=(e.v or ""):gsub("|","¦"):sub(1,500)
-    table.insert(lines,e.k.."|"..(e.t or "?").."|"..v)
+  local totalPages=math.max(1,math.ceil(#Keys/PAGE_SIZE))
+  Page=math.max(1,math.min(Page,totalPages))
+  local startI=(Page-1)*PAGE_SIZE+1
+  local endI=math.min(#Keys,startI+PAGE_SIZE-1)
+  local lines={"F:"..Filter:sub(1,40),"P:"..Page,"T:"..totalPages,"N:"..#Keys}
+  for i=startI,endI do
+    local e=Keys[i]
+    local k=e.k:sub(1,KEY_MAX)
+    local v=(e.v or ""):gsub("|","¦"):sub(1,VAL_MAX)
+    table.insert(lines,k.."|"..(e.t or "?").."|"..v)
   end
   screen.setScriptInput(table.concat(lines,"\n"))
   screen.setRenderScript(ScreenScript)
@@ -182,10 +253,9 @@ if lo=="clear" then
   Filter=""; Page=1; Collect(); PushScreen()
   system.print("Filter cleared  ("..#Keys.." keys)")
 elseif lo=="next" then
-  local vis=20
-  local totalPages=math.max(1,math.ceil(#Keys/vis))
+  local totalPages=math.max(1,math.ceil(#Keys/PAGE_SIZE))
   Page=math.min(totalPages,Page+1); PushScreen()
-  system.print("Page "..Page)
+  system.print("Page "..Page.." / "..totalPages)
 elseif lo=="prev" then
   Page=math.max(1,Page-1); PushScreen()
   system.print("Page "..Page)

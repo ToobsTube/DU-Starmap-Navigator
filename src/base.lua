@@ -2,11 +2,10 @@
 -- NAVIGATOR PERSONAL BASE v2.2.0
 -- Dual Universe Navigation System
 --
--- SLOT CONNECTIONS (connect in this order):
---   Slot 0: screen     (Screen Unit)
---   Slot 1: databank   (Databank)
---   Slot 2: receiver   (Receiver)
---   Slot 3: emitter    (Emitter)
+-- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
+--   Required: Screen Unit, Databank, Receiver, Emitter
+-- Check the Lua console after activating for a "[BASE] slot1=... slot2=..." line
+-- confirming what was detected as what.
 --
 -- Screen script is embedded — no separate screen file needed.
 -- Paste nothing into the Screen; the PB pushes the render script.
@@ -39,21 +38,20 @@ function BuildScreenScript()
 
   S[1]=string.format([[
 local json=require('dkjson')
-local input=json.decode(getInput()) or {}
-
-local WP      = input.wps     or {}
-local RT      = input.routes  or {}
-local STOPS   = input.stops   or {}
-local Tabs    = input.tabs    or {"Personal"}
-local SelWP   = input.selWP   or ""
-local SelRT   = input.selRT   or ""
-local SelStop = input.selStop or 0
-local Status  = input.status  or ""
-local Sending = input.sending or false
-local ack     = input.ack     or false
-local ActiveTab = input.activeTab or "Personal"
-
--- Theme palette (pre-derived)
+local d=json.decode(getInput()) or {}
+local View=d.view or "wps"
+local Items=d.items or {}
+local Total=d.total or 0
+local SelName=d.sel or ""
+local SelIdx=(type(d.sel)=="number") and d.sel or 0
+local Ctx=d.ctx
+local Pending=d.pending or ""
+local Status=d.status or ""
+local Sending=d.sending or false
+local ack=d.ack or false
+local RouteNm=d.rt or ""
+local OrgList=d.orgs or {}
+-- Theme
 local Ar,Ag,Ab=%f,%f,%f local Nr,Ng,Nb=%f,%f,%f
 local Bgr,Bgg,Bgb=%f,%f,%f
 local Txr,Txg,Txb=%f,%f,%f
@@ -87,265 +85,266 @@ local DMr,DMg,DMb=%f,%f,%f local NMr,NMg,NMb=%f,%f,%f local LBr,LBg,LBb=%f,%f,%f
     P.dmr,P.dmg,P.dmb, P.nmr,P.nmg,P.nmb, P.lbr,P.lbg,P.lbb, P.tir,P.tig,P.tib)
 
   S[2]=[[
--- Screen-side state survives via output round-trip
-if not _S then
-  _S={tab=ActiveTab, scrollWP=0, scrollRT=0, action="", acked=false}
-end
+if not _S then _S={action=""} end
 if ack then _S.action="" end
-if _S.tab~=ActiveTab then _S.tab=ActiveTab; _S.scrollWP=0; _S.scrollRT=0 end
-
 local function setAct(a) if _S.action=="" then _S.action=a end end
-
 local SW,SH=getResolution()
-local cx,cy=getCursor()
-local pr=getCursorReleased()
+local cx,cy=getCursor() local pr=getCursorReleased()
 local C=32
-
--- Layers
-local Lbg=createLayer() local Lp=createLayer()  local Ll=createLayer()
-local Lb=createLayer()  local Ls=createLayer()  local Lt=createLayer()
+local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
+local Lb=createLayer()  local Ls=createLayer() local Lt=createLayer()
 local Lh=createLayer()  local Lx=createLayer()
-
 local fT=loadFont("Montserrat-Light",math.floor(SH*0.031))
 local fS=loadFont("Montserrat-Light",math.floor(SH*0.022))
 local fH=loadFont("Montserrat-Light",math.floor(SH*0.035))
 local fB=loadFont("Montserrat-Light",math.floor(SH*0.042))
-
-setDefaultFillColor(Lt, Shape_Text,Txr,Txg,Txb,1)
-setDefaultFillColor(Lh, Shape_Text,Ar,Ag,Ab,1)
-setDefaultFillColor(Ls, Shape_Text,Nr,Ng,Nb,1)
-setDefaultFillColor(Lx, Shape_Text,Hdr,Hdg,Hdb,1)
+setDefaultFillColor(Lt,Shape_Text,Txr,Txg,Txb,1)
+setDefaultFillColor(Lh,Shape_Text,Ar,Ag,Ab,1)
+setDefaultFillColor(Ls,Shape_Text,Nr,Ng,Nb,1)
+setDefaultFillColor(Lx,Shape_Text,Hdr,Hdg,Hdb,1)
 setDefaultStrokeColor(Ll,Shape_Line,Lnr,Lng,Lnb,0.6)
 setDefaultStrokeWidth(Ll,Shape_Line,1)
-
--- Background
 setNextFillColor(Lbg,Bgr,Bgg,Bgb,1) addBox(Lbg,0,0,SW,SH)
-
--- Helpers
-local function PH(x,w,r,g,b)
-  setNextFillColor(Lp,r,g,b,0.88) addBox(Lp,x,C,w,C)
-end
 local function Btn(tx,x,y,w,h,en)
   local hv=(cx>=x and cx<x+w and cy>=y and cy<y+h)
   if not en then
-    setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7)
-    setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5) setNextStrokeWidth(Lb,1)
+    setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7) setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5) setNextStrokeWidth(Lb,1)
     addBoxRounded(Lb,x,y,w,h,4)
-    setNextFillColor(Lt,BDtr,BDtg,BDtb,1)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+    setNextFillColor(Lt,BDtr,BDtg,BDtb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
     return false
-  elseif hv then
-    setNextFillColor(Lb,BHfr,BHfg,BHfb,1)
-    setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1) setNextStrokeWidth(Lb,1)
-    addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
-  else
-    setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9)
-    setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1) setNextStrokeWidth(Lb,1)
-    addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
   end
+  if hv then setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1) setNextStrokeWidth(Lb,1)
+  else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1) setNextStrokeWidth(Lb,1) end
+  addBoxRounded(Lb,x,y,w,h,4)
+  setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
   return hv and pr
 end
 ]]
 
   S[3]=[[
--- TAB BAR
+-- TOP NAV BAR
 local tabH=C
-local tabW=math.floor(SW/#Tabs)
+local navTabs={
+  {l="WAYPOINTS",v="wps"},
+  {l=View=="stops" and ("◄ "..RouteNm:sub(1,14)) or "ROUTES",v="routes"},
+  {l=Ctx and ("◄ "..(Ctx:sub(1,12))) or "ORGS",v="orgs"},
+}
 setNextFillColor(Lp,TBr,TBg,TBb,1) addBox(Lp,0,0,SW,tabH)
-for i,tn in ipairs(Tabs) do
+local tabW=math.floor(SW/#navTabs)
+for i,tab in ipairs(navTabs) do
   local tx=(i-1)*tabW
-  local sel=(_S.tab==tn)
-  if sel then
-    setNextFillColor(Lp,TAr,TAg,TAb,1)
-    setNextStrokeColor(Lp,Ar,Ag,Ab,0.9) setNextStrokeWidth(Lp,1)
+  local active=(View==tab.v) or (View=="stops" and tab.v=="routes")
+  local isBack=(View=="stops" and tab.v=="routes")
+  if active then
+    setNextFillColor(Lp,TAr,TAg,TAb,1) setNextStrokeColor(Lp,Ar,Ag,Ab,0.8) setNextStrokeWidth(Lp,1)
     addBox(Lp,tx,0,tabW,tabH)
-    setNextFillColor(Lx,Hdr,Hdg,Hdb,1)
-  else
-    setNextFillColor(Lt,TIr,TIg,TIb,1)
   end
-  local L=sel and Lx or Lt
+  local L=active and Lx or Lt
+  if not active then setNextFillColor(Lt,TIr,TIg,TIb,1) end
   setNextTextAlign(L,AlignH_Center,AlignV_Middle)
-  addText(L,fT,tn,tx+tabW/2,tabH/2)
-  addLine(Ll,tx,0,tx,tabH)
+  addText(L,active and fB or fT,tab.l,tx+tabW/2,tabH/2)
+  if i>1 then addLine(Ll,tx,0,tx,tabH) end
   local hv=(cx>=tx and cx<tx+tabW and cy>=0 and cy<tabH)
-  if hv and pr and not sel then
-    setAct(json.encode({"tab",tn}))
-    _S.tab=tn _S.scrollWP=0 _S.scrollRT=0
+  if hv and pr and (not active or isBack) then
+    if tab.v=="wps" then setAct(json.encode({"nav_personal"}))
+    else setAct(json.encode({"nav",tab.v})) end
   end
 end
 addLine(Ll,0,tabH,SW,tabH)
-
--- COLUMN LAYOUT
-local CON_Y=tabH+C
-local wpX=0
-local wpW=math.floor(SW*0.39)
-local rtX=wpW
-local rtW=math.floor(SW*0.29)
-local actX=rtX+rtW
-local actW=SW-actX
-local vis=math.floor((SH-CON_Y-32)/C)-1
-
--- Column header bar
-setNextFillColor(Lp,PHr,PHg,PHb,1) setNextStrokeColor(Lp,Lnr,Lng,Lnb,0.8)
-setNextStrokeWidth(Lp,1) addBox(Lp,0,tabH,SW,C)
 if Sending then
   setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-  addText(Lt,fT,"⟳ SYNCING...",SW-8,tabH+C/2)
-else
-  setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-  addText(Lt,fT,#WP.." WPs  |  "..#RT.." Routes",SW-8,tabH+C/2)
+  addText(Lt,fS,"⟳",SW-6,tabH/2)
 end
-setNextFillColor(Lx,Hdr,Hdg,Hdb,1) setNextTextAlign(Lx,AlignH_Left,AlignV_Middle)
-addText(Lx,fB,"◄ NAV BASE v2.2 ►",8,tabH+C/2)
-addLine(Ll,0,tabH+C,SW,tabH+C)
-addLine(Ll,wpX+wpW,CON_Y,wpX+wpW,SH-32)
-addLine(Ll,rtX+rtW,CON_Y,rtX+rtW,SH-32)
+local CON_Y=tabH+2
+local FOOT_Y=SH-32
 ]]
 
   S[4]=[[
--- WAYPOINTS
-PH(wpX,wpW,PHr,PHg,PHb)
-setNextFillColor(Lx,Hdr,Hdg,Hdb,1) setNextTextAlign(Lx,AlignH_Center,AlignV_Middle)
-addText(Lx,fH,"WAYPOINTS ["..#WP.."]",wpX+wpW/2,CON_Y+C/2)
-addLine(Ll,wpX,CON_Y+C,wpX+wpW,CON_Y+C)
-local maxSW=math.max(0,#WP-vis)
-local sCW=math.max(0,math.min(_S.scrollWP,maxSW))
-for i=1,vis do
-  local idx=i+sCW if idx>#WP then break end
-  local wp=WP[idx] local ry=CON_Y+C+(i-1)*C
-  local sel=(wp.n==SelWP)
-  local hv=(cx>=wpX and cx<wpX+wpW and cy>=ry and cy<ry+C)
-  if sel then
-    setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9)
-    setNextStrokeWidth(Lp,1) addBox(Lp,wpX,ry,wpW,C)
-  elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,wpX,ry,wpW,C) end
-  setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-  addText(Lt,fS,idx..".",wpX+26,ry+C/2)
-  local L=(sel or hv) and Ls or Lt
-  if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
-  setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,wp.n,wpX+30,ry+C/2)
-  setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.18) addLine(Ll,wpX,ry+C,wpX+wpW,ry+C)
-  if hv and pr then setAct(json.encode({"selwp",wp.n})) end
+-- CONTENT AREA
+local hasSel=(View=="wps" and SelName~="") or (View=="routes" and SelName~="")
+           or (View=="stops" and SelIdx>0)
+local actH=hasSel and 36 or 0
+setNextFillColor(Lp,PHr,PHg,PHb,1) addBox(Lp,0,CON_Y,SW,C)
+addLine(Ll,0,CON_Y+C,SW,CON_Y+C)
+local listY=CON_Y+C
+local listH=FOOT_Y-actH-listY-2
+local vis=math.max(1,math.floor(listH/C))
+local lW=SW-22  -- list item width (leaves room for scroll buttons)
+
+local function ScrollBtns()
+  if Total<=#Items then return end
+  local upHv=(cx>=SW-20 and cx<SW and cy>=listY and cy<listY+C)
+  if upHv then setNextFillColor(Lb,BHfr,BHfg,BHfb,0.9) else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.5) end
+  addBox(Lb,SW-20,listY,20,C-1)
+  setNextFillColor(Lt,Txr,Txg,Txb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+  addText(Lt,fS,"▲",SW-10,listY+C/2)
+  if upHv and pr then setAct(json.encode({"scroll",-1})) end
+  local dnY=FOOT_Y-actH-C
+  local dnHv=(cx>=SW-20 and cx<SW and cy>=dnY and cy<dnY+C)
+  if dnHv then setNextFillColor(Lb,BHfr,BHfg,BHfb,0.9) else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.5) end
+  addBox(Lb,SW-20,dnY,20,C-1)
+  setNextFillColor(Lt,Txr,Txg,Txb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+  addText(Lt,fS,"▼",SW-10,dnY+C/2)
+  if dnHv and pr then setAct(json.encode({"scroll",1})) end
 end
-if #WP>vis then
-  local sbX=wpX+wpW-5 local sbY=CON_Y+C+2 local sbH=vis*C-4
-  local tH=math.max(12,sbH*(vis/#WP))
-  local tY=sbY+(sbH-tH)*(sCW/math.max(1,maxSW))
-  setNextFillColor(Ll,STr,STg,STb,0.4) addBox(Ll,sbX,sbY,4,sbH)
-  setNextFillColor(Ll,SHr,SHg,SHb,0.8) addBox(Ll,sbX,tY,4,tH)
+
+if View=="wps" then
+  setNextFillColor(Lx,Hdr,Hdg,Hdb,1) setNextTextAlign(Lx,AlignH_Left,AlignV_Middle)
+  addText(Lx,fH," WAYPOINTS ["..Total.."]  "..(Ctx or "Personal"),8,CON_Y+C/2)
+  if SelName~="" and d.sel_c and d.sel_c~="" then
+    setNextFillColor(Lt,DMr,DMg,DMb,0.85) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+    addText(Lt,fS,d.sel_c.."  ",lW,CON_Y+C/2)
+  end
+  ScrollBtns()
+  for i,wp in ipairs(Items) do
+    local ry=listY+(i-1)*C
+    if ry+C>FOOT_Y-actH then break end
+    local absIdx=i+(d.scroll or 0)
+    local sel=(wp.n==SelName)
+    local hv=(cx>=0 and cx<lW and cy>=ry and cy<ry+C)
+    if sel then
+      setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9) setNextStrokeWidth(Lp,1) addBox(Lp,0,ry,lW,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,0,ry,lW,C) end
+    setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle) addText(Lt,fS,absIdx..".",26,ry+C/2)
+    local Ln=sel and Ls or Lt
+    if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
+    setNextTextAlign(Ln,AlignH_Left,AlignV_Middle) addText(Ln,fT,wp.n,30,ry+C/2)
+    local coord_mark=wp.hc and "●" or "—"
+    setNextFillColor(Lt,wp.hc and DMr or NMr, wp.hc and DMg or NMg, wp.hc and DMb or NMb,0.6)
+    setNextTextAlign(Lt,AlignH_Right,AlignV_Middle) addText(Lt,fS,coord_mark,lW-2,ry+C/2)
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.15) addLine(Ll,0,ry+C,SW,ry+C)
+    if hv and pr then setAct(json.encode({"sel",wp.n})) end
+  end
+
+elseif View=="routes" then
+  setNextFillColor(Lx,Hdr,Hdg,Hdb,1) setNextTextAlign(Lx,AlignH_Left,AlignV_Middle)
+  addText(Lx,fH," ROUTES ["..Total.."]  "..(Ctx or "Personal"),8,CON_Y+C/2)
+  ScrollBtns()
+  for i,r in ipairs(Items) do
+    local ry=listY+(i-1)*C
+    if ry+C>FOOT_Y-actH then break end
+    local sel=(r.n==SelName)
+    local hv=(cx>=0 and cx<lW and cy>=ry and cy<ry+C)
+    if sel then
+      setNextFillColor(Lp,Rtdr,Rtdg,Rtdb,0.22) setNextStrokeColor(Lp,Rtr,Rtg,Rtb,0.9) setNextStrokeWidth(Lp,1) addBox(Lp,0,ry,lW,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,0,ry,lW,C) end
+    local Ln=sel and Ls or Lt
+    if sel then setNextFillColor(Ls,Rtlr,Rtlg,Rtlb,1) end
+    setNextTextAlign(Ln,AlignH_Left,AlignV_Middle) addText(Ln,fT,r.n,8,ry+C/2)
+    setNextFillColor(Lt,Rtdr,Rtdg,Rtdb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+    addText(Lt,fT,(r.pc or 0).." ▶",lW-4,ry+C/2)
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.15) addLine(Ll,0,ry+C,SW,ry+C)
+    if hv and pr then setAct(json.encode({"sel",r.n})) end
+  end
+
+elseif View=="stops" then
+  setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Left,AlignV_Middle)
+  addText(Lh,fH," "..RouteNm.."  ["..Total.." stops]",8,CON_Y+C/2)
+  ScrollBtns()
+  for i,st in ipairs(Items) do
+    local ry=listY+(i-1)*C
+    if ry+C>FOOT_Y-actH then break end
+    local absIdx=i+(d.scroll or 0)
+    local sel=(SelIdx==absIdx)
+    local hv=(cx>=0 and cx<lW and cy>=ry and cy<ry+C)
+    if sel then
+      setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9) setNextStrokeWidth(Lp,1) addBox(Lp,0,ry,lW,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,0,ry,lW,C) end
+    local lbl=(st.label and st.label~="") and st.label or ""
+    setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle) addText(Lt,fS,absIdx..".",26,ry+C/2)
+    local Ln=sel and Ls or Lt
+    if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
+    setNextTextAlign(Ln,AlignH_Left,AlignV_Middle) addText(Ln,fT,lbl~="" and lbl or (st.c or ""),30,ry+C/2)
+    if lbl~="" then
+      setNextFillColor(Lt,DMr,DMg,DMb,0.7) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+      addText(Lt,fS,st.c or "",lW-2,ry+C/2)
+    end
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.15) addLine(Ll,0,ry+C,SW,ry+C)
+    if hv and pr then setAct(json.encode({"sel",absIdx})) end
+  end
+
+else -- orgs view
+  setNextFillColor(Lx,Hdr,Hdg,Hdb,1) setNextTextAlign(Lx,AlignH_Left,AlignV_Middle)
+  addText(Lx,fH," ORGANIZATIONS",8,CON_Y+C/2)
+  local bG=6 local cols=3
+  local btnW=math.floor((SW-8)/cols)-bG local btnH=C+8
+  if #OrgList==0 then
+    setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
+    addText(Lt,fS,"No orgs — push from a ship to register one",SW/2,listY+C)
+  end
+  for i,o in ipairs(OrgList) do
+    local col=((i-1)%cols) local row=math.floor((i-1)/cols)
+    local bx=4+col*(btnW+bG)
+    local by=listY+bG+row*(btnH+bG)
+    if by+btnH>FOOT_Y then break end
+    local active=(Ctx==o)
+    local hv=(cx>=bx and cx<bx+btnW and cy>=by and cy<by+btnH)
+    if active then setNextFillColor(Lb,TAr,TAg,TAb,1) setNextStrokeColor(Lb,Ar,Ag,Ab,0.9) setNextStrokeWidth(Lb,2)
+    elseif hv then setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1) setNextStrokeWidth(Lb,1)
+    else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.7) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.8) setNextStrokeWidth(Lb,1) end
+    addBoxRounded(Lb,bx,by,btnW,btnH,5)
+    local Lo=active and Lx or Lt
+    if active then setNextFillColor(Lx,Hdr,Hdg,Hdb,1) end
+    setNextTextAlign(Lo,AlignH_Center,AlignV_Middle) addText(Lo,fT,o,bx+btnW/2,by+btnH/2)
+    if hv and pr then setAct(json.encode({"nav_org",o})) end
+  end
 end
 ]]
 
   S[5]=[[
--- ROUTES / STOPS
-if SelStop>0 and SelRT~="" then
-  PH(rtX,rtW,PHr,PHg,PHb)
-  setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Left,AlignV_Middle)
-  addText(Lh,fH,"◄ "..SelRT,rtX+8,CON_Y+C/2)
-  addLine(Ll,rtX,CON_Y+C,rtX+rtW,CON_Y+C)
-  local maxSR=math.max(0,#STOPS-vis)
-  local sCR=math.max(0,math.min(_S.scrollRT,maxSR))
-  for i=1,vis do
-    local idx=i+sCR if idx>#STOPS then break end
-    local st=STOPS[idx] local ry2=CON_Y+C+(i-1)*C
-    local sel=(SelStop==idx)
-    local hv=(cx>=rtX and cx<rtX+rtW and cy>=ry2 and cy<ry2+C)
-    if sel then
-      setNextFillColor(Lp,SLr,SLg,SLb,0.22) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9)
-      setNextStrokeWidth(Lp,1) addBox(Lp,rtX,ry2,rtW,C)
-    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,rtX,ry2,rtW,C) end
-    setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-    addText(Lt,fS,idx..".",rtX+22,ry2+C/2)
-    local lbl=st.label or st.c:sub(1,24)
-    local L=(sel or hv) and Ls or Lt
-    if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
-    setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,lbl,rtX+26,ry2+C/2)
-    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.18) addLine(Ll,rtX,ry2+C,rtX+rtW,ry2+C)
-    if hv and pr then setAct(json.encode({"selstop",idx})) end
-  end
-else
-  PH(rtX,rtW,Rtdr,Rtdg,Rtdb)
-  setNextFillColor(Lh,Rtr,Rtg,Rtb,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
-  addText(Lh,fH,"ROUTES ["..#RT.."]",rtX+rtW/2,CON_Y+C/2)
-  addLine(Ll,rtX,CON_Y+C,rtX+rtW,CON_Y+C)
-  local maxSR=math.max(0,#RT-vis)
-  local sCR=math.max(0,math.min(_S.scrollRT,maxSR))
-  for i=1,vis do
-    local idx=i+sCR if idx>#RT then break end
-    local r=RT[idx] local ry2=CON_Y+C+(i-1)*C
-    local sel=(r.n==SelRT)
-    local hv=(cx>=rtX and cx<rtX+rtW and cy>=ry2 and cy<ry2+C)
-    if sel then
-      setNextFillColor(Lp,Rtdr,Rtdg,Rtdb,0.22) setNextStrokeColor(Lp,Rtr,Rtg,Rtb,0.9)
-      setNextStrokeWidth(Lp,1) addBox(Lp,rtX,ry2,rtW,C)
-    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,rtX,ry2,rtW,C) end
-    local L=(sel or hv) and Ls or Lt
-    if sel then setNextFillColor(Ls,Rtlr,Rtlg,Rtlb,1) end
-    setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,r.n,rtX+8,ry2+C/2)
-    local np=#(r.pts or {})
-    setNextFillColor(Lt,Rtdr,Rtdg,Rtdb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-    addText(Lt,fS,np.."▶",rtX+rtW-6,ry2+C/2)
-    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.18) addLine(Ll,rtX,ry2+C,rtX+rtW,ry2+C)
-    if hv and pr then setAct(json.encode({"selrt",r.n})) end
+-- ACTION BAR (when item selected)
+if hasSel then
+  local abY=FOOT_Y-actH
+  setNextFillColor(Lp,PHr,PHg,PHb,0.95) addBox(Lp,0,abY,SW,actH)
+  addLine(Ll,0,abY,SW,abY)
+  local bH=actH-6 local bG=4 local bx=4
+  if View=="wps" then
+    local bW=math.floor((SW-8-bG*4)/5)
+    if Btn("ADD WP",    bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","add_wp"}))    end bx=bx+bW+bG
+    if Btn("RENAME",    bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","rename"}))    end bx=bx+bW+bG
+    if Btn("SET COORDS",bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","set_coords"}))end bx=bx+bW+bG
+    if Btn("PRINT",     bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","print"}))     end bx=bx+bW+bG
+    if Btn("DELETE",    bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","delete"}))    end
+  elseif View=="routes" then
+    local bW=math.floor((SW-8-bG*4)/5)
+    if Btn("NEW ROUTE", bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","new_route"})) end bx=bx+bW+bG
+    if Btn("STOPS ▶",   bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","open_stops"}))end bx=bx+bW+bG
+    if Btn("RENAME",    bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","rename"}))    end bx=bx+bW+bG
+    if Btn("ADD STOP",  bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","add_stop"}))  end bx=bx+bW+bG
+    if Btn("DELETE",    bx,abY+3,bW,bH,true) then setAct(json.encode({"cmd","delete"}))    end
+  elseif View=="stops" then
+    local bW=math.floor((SW-8-bG*4)/5)
+    if Btn("ADD STOP",   bx,abY+3,bW,bH,true)     then setAct(json.encode({"cmd","add_stop"}))  end bx=bx+bW+bG
+    if Btn("RENAME",     bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","rename"}))    end bx=bx+bW+bG
+    if Btn("SET COORDS", bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","set_coords"}))end bx=bx+bW+bG
+    if Btn("PRINT",      bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","print"}))     end bx=bx+bW+bG
+    if Btn("DEL STOP",   bx,abY+3,bW,bH,SelIdx>0) then setAct(json.encode({"cmd","delete"}))    end
   end
 end
 ]]
 
   S[6]=[[
--- ACTION PANEL
-PH(actX,actW,PHr,PHg,PHb)
-setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
-addText(Lh,fH,"ACTIONS",actX+actW/2,CON_Y+C/2)
-addLine(Ll,actX,CON_Y+C,actX+actW,CON_Y+C)
-local selInfo=""
-if SelWP~="" then selInfo="[WP] "..SelWP
-elseif SelRT~="" and SelStop>0 then selInfo="[STOP "..SelStop.."] "..SelRT
-elseif SelRT~="" then selInfo="[ROUTE] "..SelRT end
-if selInfo~="" then
-  setNextFillColor(Ls,Nr,Ng,Nb,1) setNextTextAlign(Ls,AlignH_Left,AlignV_Top)
-  addText(Ls,fS,"SELECTED:",actX+8,CON_Y+C+8)
-  setNextFillColor(Ls,Nr,Ng,Nb,1) setNextTextAlign(Ls,AlignH_Left,AlignV_Top)
-  addText(Ls,fT,selInfo,actX+8,CON_Y+C+22)
-end
-local bX=actX+6 local bW=actW-12 local bH=26 local bG=4
-local by=SH-32-(bH+bG)*8
-if Btn("★ ADD WP (chat: add NAME)",    bX,by,bW,bH,true)                       then setAct(json.encode({"hint_add"}))      end by=by+bH+bG
-if Btn("✎ RENAME",                     bX,by,bW,bH,selInfo~="")                then setAct(json.encode({"hint_rename"}))   end by=by+bH+bG
-if Btn("✎ SET COORDS",                 bX,by,bW,bH,selInfo~="")                then setAct(json.encode({"hint_setpos"}))   end by=by+bH+bG
-if Btn("+ NEW ROUTE",                  bX,by,bW,bH,true)                       then setAct(json.encode({"hint_newroute"})) end by=by+bH+bG
-if Btn("+ ADD STOP TO ROUTE",          bX,by,bW,bH,SelRT~="" and SelStop==0)   then setAct(json.encode({"hint_addstop"}))  end by=by+bH+bG
-if Btn("✕ DELETE SELECTED",            bX,by,bW,bH,selInfo~="")                then setAct(json.encode({"delete"}))        end by=by+bH+bG
-if Btn("✕ CLEAR ALL WPs",              bX,by,bW,bH,#WP>0)                      then setAct(json.encode({"clearwps"}))      end by=by+bH+bG
-if Btn("✕ CLEAR ALL ROUTES",           bX,by,bW,bH,#RT>0)                      then setAct(json.encode({"clearroutes"}))   end
-]]
-
-  S[7]=[[
 -- FOOTER
-addLine(Ll,0,SH-32,SW,SH-32)
-setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,SH-32,SW,32)
--- [THEME] button in footer
-local thX=SW-80 local thW=72 local thY=SH-28 local thH=22
+addLine(Ll,0,FOOT_Y,SW,FOOT_Y)
+setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,FOOT_Y,SW,32)
+local thX=SW-80 local thW=72 local thY=FOOT_Y+5 local thH=22
 local thHv=(cx>=thX and cx<thX+thW and cy>=thY and cy<thY+thH)
-if thHv then
-  setNextFillColor(Lb,BHfr,BHfg,BHfb,0.8) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.8)
-else
-  setNextFillColor(Lb,BNfr,BNfg,BNfb,0.6) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.6)
-end
+if thHv then setNextFillColor(Lb,BHfr,BHfg,BHfb,0.8) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.8)
+else setNextFillColor(Lb,BNfr,BNfg,BNfb,0.6) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.6) end
 setNextStrokeWidth(Lb,1) addBoxRounded(Lb,thX,thY,thW,thH,3)
 setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"THEME",thX+thW/2,thY+thH/2)
 if thHv and pr then setAct(json.encode({"open_theme"})) end
--- Status / hint text
-if Status~="" then
-  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,Status,SW/2-40,SH-16)
+if Pending~="" then
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
+  addText(Lt,fT,"► "..Pending,8,FOOT_Y+16)
+elseif Status~="" then
+  setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
+  addText(Lt,fT,Status,8,FOOT_Y+16)
 else
-  setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-  addText(Lt,fS,"Click to select  |  chat: add / del / rename / setpos / newroute / addstop / delstop / help",SW/2-40,SH-16)
+  setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
+  addText(Lt,fS,"NAV BASE v2.3  |  chat: help",8,FOOT_Y+16)
 end
-
-setOutput(json.encode({action=_S.action, tab=_S.tab,
-  scrollWP=_S.scrollWP, scrollRT=_S.scrollRT}))
+setOutput(json.encode({a=_S.action}))
 requestAnimationFrame(2)
 ]]
   return table.concat(S)
@@ -804,12 +803,11 @@ function LoadTheme()
   return data
 end
 
-function SaveTheme(name,slots)
+function StoreThemeProfile(name,slots)
   if not databank then return end
   name=name:gsub("[^%w%s_-]",""):sub(1,20)
   if name=="" then name="Default" end
   databank.setStringValue("theme_p_"..name,json.encode(slots))
-  databank.setStringValue("theme_profile_active",name)
   local raw=databank.getStringValue("theme_profile_names") or "[]"
   local ok,names=pcall(json.decode,raw)
   if not ok or type(names)~="table" then names={} end
@@ -817,6 +815,33 @@ function SaveTheme(name,slots)
   for _,n in ipairs(names) do if n==name then found=true;break end end
   if not found then table.insert(names,name) end
   databank.setStringValue("theme_profile_names",json.encode(names))
+  return name
+end
+
+function SaveTheme(name,slots)
+  local stored=StoreThemeProfile(name,slots)
+  if not databank or not stored then return end
+  databank.setStringValue("theme_profile_active",stored)
+end
+
+-- Store an incoming (network) profile without clobbering a differently-named
+-- collision — same name+same content is treated as already-known (no-op rename),
+-- same name+different content gets auto-suffixed ("Name-2", "Name-3", ...).
+function StoreThemeProfileDedup(name,slots)
+  if not databank then return end
+  name=name:gsub("[^%w%s_-]",""):sub(1,20)
+  if name=="" then name="Default" end
+  local encoded=json.encode(slots)
+  local finalName=name
+  if databank.getStringValue("theme_p_"..finalName)~="" and databank.getStringValue("theme_p_"..finalName)~=encoded then
+    local i=2
+    repeat
+      finalName=name.."-"..i
+      local existing=databank.getStringValue("theme_p_"..finalName)
+      i=i+1
+    until existing=="" or existing==encoded
+  end
+  return StoreThemeProfile(finalName,slots)
 end
 
 function DeleteTheme(name)
@@ -886,7 +911,81 @@ event=onStart()
 args=
 ]]
 
-local VERSION="v2.3.0"
+-- ── Slot auto-detect ────────────────────────────────────────────
+-- Link Screen, Databank, Receiver, Emitter to ANY of the PB's slots, in any
+-- order — same technique as the ship PBs (see src/ship_noscreen.lua for the
+-- full write-up). Check the Lua console on startup ("[BASE] slot1=...") to
+-- confirm what got detected.
+do
+  -- Primary check: DU's own type introspection. getElementClass() (confirmed
+  -- present on a "Modern Screen xs" via a live field dump, 2026-09-06)
+  -- logs a deprecation warning in-game telling scripts to use getClass()
+  -- instead — try that first, fall back to the deprecated name for older
+  -- game versions that might not have getClass() yet. Either way the
+  -- returned string gets a lowercase substring match, robust to exact
+  -- naming we haven't seen across other screen/receiver/emitter variants.
+  local function classOf(s)
+    local ok,cls=pcall(function() return s.getClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    ok,cls=pcall(function() return s.getElementClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    return nil
+  end
+  local function probe(s)
+    if not s then return nil end
+    local cls=classOf(s)
+    if cls then
+      if cls:find("screen")   then return "screen" end
+      if cls:find("databank") then return "databank" end
+      if cls:find("receiver") then return "receiver" end
+      if cls:find("emitter")  then return "emitter" end
+    end
+    -- Fallback for class names this doesn't recognize, or if
+    -- getElementClass() itself isn't available on some element. Previously
+    -- getRenderScript()/getScriptInput() were the primary screen check —
+    -- confirmed via that field dump that NEITHER getter actually exists on
+    -- a "Modern Screen xs" (only the setter halves do), which is why the
+    -- old capability-probe silently misclassified a real screen as
+    -- "unrecognized". getScriptOutput() (the real read counterpart DU
+    -- screens expose) is checked first here as the better fallback.
+    if pcall(function() return s.getScriptOutput() end)
+      or pcall(function() return s.getRenderScript() end)
+      or pcall(function() return s.getScriptInput() end) then return "screen" end
+    if pcall(function() return s.getChannelList() end) then return "receiver" end
+    if pcall(function() return s.getKeyList() end)      then return "databank" end
+    return "emitter"
+  end
+  -- Best-effort: read the element's in-game display name (works if you've
+  -- renamed it via right-click -> Rename). Wrapped in pcall so if this isn't
+  -- the right method on some element type, it just silently returns nil.
+  local function tryName(s)
+    local ok,n=pcall(function() return s.getName() end)
+    if ok and n and n~="" then return n end
+    return nil
+  end
+  -- Literal slotN references only — DU's sandbox does not support building
+  -- these names dynamically (e.g. _ENV["slot"..i]) and silently fails.
+  local raw={slot1,slot2,slot3,slot4,slot5,slot6,slot7,slot8,slot9,slot10}
+  for i,s in ipairs(raw) do
+    local kind=probe(s)
+    if kind=="databank" and not databank then databank=s
+    elseif kind=="receiver" and not receiver then receiver=s
+    elseif kind=="emitter"  and not emitter  then emitter=s
+    elseif kind=="screen"   and not screen   then screen=s
+    end
+  end
+  local dbg={}
+  for i,s in ipairs(raw) do
+    local role=(s==databank and "databank") or (s==receiver and "receiver")
+      or (s==emitter and "emitter") or (s==screen and "screen") or "unrecognized"
+    local nm=tryName(s)
+    local cls=(role=="unrecognized") and classOf(s) or nil
+    table.insert(dbg,"slot"..i.."="..role..(nm and ("("..nm..")") or "")..(cls and ("[class:"..cls.."]") or ""))
+  end
+  system.print("[BASE] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
+end
+
+local VERSION="v2.2.0"
 BaseChannel = "NavBase" --export: Channel ships use to reach this base
 
 WaypointList = {}
@@ -901,7 +1000,11 @@ PushOrgName  = nil  -- org context during a ship→base push with org data
 SelWP        = ""   -- full name (with prefix)
 SelRoute     = ""   -- full name (with prefix)
 SelStop      = 0
-ActiveTab    = "Personal"
+OrgContext   = nil  -- nil=personal, else org name string
+ActiveView   = "wps" -- "wps"|"routes"|"stops"|"orgs"
+ViewScroll   = 0    -- PB-owned scroll position
+PendingAction= ""   -- guided chat: "add_wp"|"rename"|"set_coords"|"new_route"|"add_stop"
+PendingTarget= ""   -- item name context for pending action
 AllowedShips = {}   -- whitelist of ship IDs; empty = allow all
 StatusMsg    = ""; StatusExpiry=0
 SendQueue    = {}
@@ -1090,6 +1193,13 @@ function StartSend(requester)
   for _,r in ipairs(RouteList) do
     table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}})
   end
+  for _,tn in ipairs(GetThemeProfiles()) do
+    local raw=databank.getStringValue("theme_p_"..tn)
+    local ok,slots=pcall(json.decode,raw)
+    if ok and slots then
+      table.insert(SendQueue,{type="theme",data={n=tn,slots=slots}})
+    end
+  end
   for _,org in ipairs(OrgNames) do
     local od=OrgData[org]
     if od and od.channel~="" and (#od.wps>0 or #od.routes>0) then
@@ -1116,49 +1226,86 @@ function GetTabList()
   return t
 end
 
-function GetTabWPs()
-  if ActiveTab=="Personal" then return WaypointList end
-  local od=OrgData[ActiveTab]
-  return od and od.wps or {}
+function GetActiveWPs()
+  if OrgContext==nil then return WaypointList end
+  local od=OrgData[OrgContext]; return od and od.wps or {}
 end
 
-function GetTabRoutes()
-  if ActiveTab=="Personal" then return RouteList end
-  local od=OrgData[ActiveTab]
-  return od and od.routes or {}
+function GetActiveRoutes()
+  if OrgContext==nil then return RouteList end
+  local od=OrgData[OrgContext]; return od and od.routes or {}
 end
+
+-- Legacy aliases used by chat handler
+function GetTabWPs()   return GetActiveWPs()   end
+function GetTabRoutes() return GetActiveRoutes() end
+
+local PAGE=16  -- max items sent per push
 
 function PushState()
   if not screen then return end
   if ShowThemePicker then
     local ok,result=pcall(BuildPickerScript)
     if not ok then system.print("[BASE] picker render error: "..tostring(result)); return end
-    screen.setRenderScript(result)
-  else
-    local dispWPs = GetTabWPs()
-    local dispRTs = GetTabRoutes()
-    local selRoutePts={}
-    if SelRoute~="" then
-      for _,r in ipairs(dispRTs) do if r.n==SelRoute then selRoutePts=r.pts;break end end
-    end
-    screen.setScriptInput(json.encode({
-      tabs      = GetTabList(),
-      activeTab = ActiveTab,
-      wps       = dispWPs,
-      routes    = dispRTs,
-      stops     = selRoutePts,
-      selWP     = SelWP,
-      selRT     = SelRoute,
-      selStop   = SelStop,
-      status    = StatusMsg,
-      sending   = Sending,
-      ack       = pending_ack,
-    }))
-    pending_ack=false
-    local ok,result=pcall(BuildScreenScript)
-    if not ok then system.print("[BASE] render error: "..tostring(result)); return end
-    screen.setRenderScript(result)
+    screen.setRenderScript(result); return
   end
+
+  local inp
+  if ActiveView=="wps" then
+    local all=GetActiveWPs()
+    local sc=math.max(0,math.min(ViewScroll,math.max(0,#all-PAGE)))
+    local items={}
+    for i=sc+1,math.min(sc+PAGE,#all) do
+      table.insert(items,{n=all[i].n,hc=(all[i].c~="")})
+    end
+    local sel_c=""
+    if SelWP~="" then
+      for _,wp in ipairs(all) do if wp.n:lower()==SelWP:lower() then sel_c=wp.c or ""; break end end
+    end
+    inp={view="wps",items=items,total=#all,scroll=sc,
+         sel=SelWP,sel_c=sel_c,ctx=OrgContext,pending=PendingAction,
+         status=StatusMsg,sending=Sending,ack=pending_ack}
+
+  elseif ActiveView=="routes" then
+    local all=GetActiveRoutes()
+    local sc=math.max(0,math.min(ViewScroll,math.max(0,#all-PAGE)))
+    local items={}
+    for i=sc+1,math.min(sc+PAGE,#all) do
+      table.insert(items,{n=all[i].n,pc=#(all[i].pts or {})})
+    end
+    inp={view="routes",items=items,total=#all,scroll=sc,
+         sel=SelRoute,ctx=OrgContext,pending=PendingAction,
+         status=StatusMsg,sending=Sending,ack=pending_ack}
+
+  elseif ActiveView=="stops" then
+    local stops={}
+    for _,r in ipairs(GetActiveRoutes()) do
+      if r.n==SelRoute then stops=r.pts; break end
+    end
+    local sc=math.max(0,math.min(ViewScroll,math.max(0,#stops-PAGE)))
+    local items={}
+    for i=sc+1,math.min(sc+PAGE,#stops) do
+      table.insert(items,{c=stops[i].c,label=stops[i].label or ""})
+    end
+    inp={view="stops",rt=SelRoute,items=items,total=#stops,scroll=sc,
+         sel=SelStop,ctx=OrgContext,pending=PendingAction,
+         status=StatusMsg,ack=pending_ack}
+
+  else -- "orgs"
+    inp={view="orgs",orgs=OrgNames,ctx=OrgContext,
+         status=StatusMsg,ack=pending_ack}
+  end
+
+  pending_ack=false
+  local enc=json.encode(inp)
+  if #enc>1024 then
+    system.print("[BASE] input overflow "..#enc.."  truncating items")
+    inp.items={}; enc=json.encode(inp)
+  end
+  screen.setScriptInput(enc)
+  local ok,result=pcall(BuildScreenScript)
+  if not ok then system.print("[BASE] render error: "..tostring(result)); return end
+  screen.setRenderScript(result)
 end
 
 -- ── Init ──────────────────────────────────────────────────────
@@ -1171,6 +1318,8 @@ unit.setTimer("screen_init",1)
 unit.setTimer("screen_poll",0.05)
 system.print("=== Nav Base "..VERSION.." ===  WPs:"..#WaypointList.."  Routes:"..#RouteList)
 system.print("Orgs cached: "..#OrgNames)
+ActiveView="wps"; OrgContext=nil; ViewScroll=0
+PendingAction=""; PendingTarget=""
 if screen then screen.activate() end
 PushState()
 
@@ -1222,6 +1371,8 @@ if item.type=="wp" then
   emitter.send(BaseChannel,"<SyncWP>"..json.encode(item.data):gsub('"',"@@@"))
 elseif item.type=="route" then
   emitter.send(BaseChannel,"<SyncRoute>"..json.encode(item.data):gsub('"',"@@@"))
+elseif item.type=="theme" then
+  emitter.send(BaseChannel,"<SyncTheme>"..json.encode(item.data):gsub('"',"@@@"))
 elseif item.type=="org_hdr" then
   emitter.send(BaseChannel,item.msg)
 end
@@ -1234,6 +1385,7 @@ event=onTimer(tag)
 args="heartbeat"
 ]]
 if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg=""; PushState() end
+UpdateChannels()
 system.print("[BASE] Alive  WPs:"..#WaypointList.."  Routes:"..#RouteList.."  Orgs:"..#OrgNames)
 
 
@@ -1305,89 +1457,124 @@ if ShowThemePicker then
   PushState(); return
 end
 
--- Main screen mode: output is {action, tab, scrollWP, scrollRT}
--- Sync screen-side scroll/tab state back to PB
-if d.tab and d.tab~="" and d.tab~=ActiveTab then
-  ActiveTab=d.tab; SelWP=""; SelRoute=""; SelStop=0
-end
-
-if not d.action or d.action=="" then PushState(); return end
+-- Main screen mode: output is {a=action}
+if not d.a or d.a=="" then PushState(); return end
 pending_ack=true
 
-local ok2,act
-ok2,act=pcall(json.decode,d.action)
+local ok2,act=pcall(json.decode,d.a)
 if not ok2 or type(act)~="table" then PushState(); return end
 local cmd=act[1]
 
-if cmd=="tab" then
-  ActiveTab=act[2]; SelWP=""; SelRoute=""; SelStop=0
+-- Navigation
+if cmd=="nav" then
+  local v=act[2]
+  if v=="routes" and ActiveView=="stops" then
+    -- back from stops to routes list
+    ActiveView="routes"; SelStop=0; ViewScroll=0
+  else
+    ActiveView=v; SelWP=""; SelRoute=""; SelStop=0; ViewScroll=0
+  end
 
-elseif cmd=="selwp" then
-  SelWP=(SelWP==act[2] and "" or act[2])
-  SelRoute=""; SelStop=0
+elseif cmd=="nav_personal" then
+  OrgContext=nil; SelWP=""; SelRoute=""; SelStop=0; ViewScroll=0
+  ActiveView="wps"
 
-elseif cmd=="selrt" then
-  if SelRoute==act[2] then SelStop=(SelStop==0 and 1 or 0)
-  else SelRoute=act[2]; SelStop=0; SelWP="" end
+elseif cmd=="nav_org" then
+  OrgContext=act[2]; SelWP=""; SelRoute=""; SelStop=0; ViewScroll=0
+  if ActiveView=="orgs" then ActiveView="wps" end
 
-elseif cmd=="selstop" then SelStop=(SelStop==act[2] and 0 or act[2])
+elseif cmd=="scroll" then
+  local all = ActiveView=="wps" and GetActiveWPs()
+           or ActiveView=="routes" and GetActiveRoutes()
+           or ActiveView=="stops" and (function()
+                for _,r in ipairs(GetActiveRoutes()) do
+                  if r.n==SelRoute then return r.pts end
+                end; return {}
+              end)()
+           or {}
+  local maxScroll=math.max(0,#all-PAGE)
+  ViewScroll=math.max(0,math.min(ViewScroll+(act[2] or 0),maxScroll))
 
-elseif cmd=="delete" then
-  if SelWP~="" then
-    if ActiveTab=="Personal" then DelWP(SelWP); SelWP=""
-    else
-      local od=OrgData[ActiveTab]
-      if od then
-        for i,wp in ipairs(od.wps) do if wp.n==SelWP then table.remove(od.wps,i); break end end
-        SaveData(); SetStatus("Deleted WP: "..SelWP); SelWP=""
-      end
+elseif cmd=="sel" then
+  if ActiveView=="wps" then
+    SelWP=(SelWP==act[2] and "" or act[2]); SelRoute=""; SelStop=0
+  elseif ActiveView=="routes" then
+    SelRoute=(SelRoute==act[2] and "" or act[2]); SelWP=""; SelStop=0
+  elseif ActiveView=="stops" then
+    SelStop=(SelStop==act[2] and 0 or act[2])
+  end
+
+-- Guided chat actions (buttons set pending, user types the data)
+elseif cmd=="cmd" then
+  local c=act[2]
+  if c=="add_wp" then
+    PendingAction="add_wp"; PendingTarget=""
+    SetStatus("Type WP name in chat",30)
+  elseif c=="rename" then
+    if SelWP~="" then PendingAction="rename"; PendingTarget=SelWP
+    elseif SelRoute~="" and SelStop==0 then PendingAction="rename"; PendingTarget=SelRoute
+    elseif SelStop>0 then PendingAction="rename"; PendingTarget=tostring(SelStop) end
+    if PendingAction~="" then SetStatus("Type new name in chat",30) end
+  elseif c=="set_coords" then
+    if SelWP~="" then PendingAction="set_coords"; PendingTarget=SelWP
+    elseif SelStop>0 then PendingAction="set_coords"; PendingTarget=tostring(SelStop) end
+    if PendingAction~="" then SetStatus("Type ::pos{} in chat",30) end
+  elseif c=="new_route" then
+    PendingAction="new_route"; PendingTarget=""
+    SetStatus("Type route name in chat",30)
+  elseif c=="add_stop" then
+    if SelRoute~="" then
+      PendingAction="add_stop"; PendingTarget=SelRoute
+      SetStatus("Type WP name or ::pos{} in chat",30)
     end
-  elseif SelRoute~="" and SelStop>0 then
-    if ActiveTab=="Personal" then DelStop(SelRoute,SelStop); SelStop=0
-    else
-      local od=OrgData[ActiveTab]
-      if od then
-        for _,r in ipairs(od.routes) do
-          if r.n==SelRoute then table.remove(r.pts,SelStop); break end
+  elseif c=="open_stops" then
+    if SelRoute~="" then ActiveView="stops"; SelStop=0; ViewScroll=0 end
+  elseif c=="print" then
+    if SelWP~="" then
+      for _,wp in ipairs(GetActiveWPs()) do
+        if wp.n==SelWP then
+          system.print("[WP] "..wp.n..(OrgContext and "  ("..OrgContext..")" or ""))
+          system.print(wp.c)
+          break
         end
-        SaveData(); SetStatus("Stop removed"); SelStop=0
+      end
+    elseif SelStop>0 then
+      for _,r in ipairs(GetActiveRoutes()) do
+        if r.n==SelRoute and r.pts[SelStop] then
+          local s=r.pts[SelStop]
+          local lbl=(s.label and s.label~="") and s.label or ("Stop "..SelStop)
+          system.print("[ROUTE] "..SelRoute.."  stop "..SelStop..": "..lbl)
+          system.print(s.c)
+          break
+        end
       end
     end
-  elseif SelRoute~="" then
-    if ActiveTab=="Personal" then DelRoute(SelRoute); SelRoute=""; SelStop=0
-    else
-      local od=OrgData[ActiveTab]
-      if od then
-        for i,r in ipairs(od.routes) do if r.n==SelRoute then table.remove(od.routes,i); break end end
-        SaveData(); SetStatus("Deleted route: "..SelRoute); SelRoute=""; SelStop=0
+  elseif c=="delete" then
+    if ActiveView=="wps" and SelWP~="" then
+      if OrgContext==nil then DelWP(SelWP); SelWP=""
+      else
+        local od=OrgData[OrgContext]
+        if od then for i,wp in ipairs(od.wps) do if wp.n==SelWP then table.remove(od.wps,i);break end end
+          SaveData(); SetStatus("Deleted WP: "..SelWP); SelWP="" end
+      end
+    elseif ActiveView=="routes" and SelRoute~="" then
+      if OrgContext==nil then DelRoute(SelRoute); SelRoute=""; SelStop=0
+      else
+        local od=OrgData[OrgContext]
+        if od then for i,r in ipairs(od.routes) do if r.n==SelRoute then table.remove(od.routes,i);break end end
+          SaveData(); SetStatus("Deleted route: "..SelRoute); SelRoute=""; SelStop=0 end
+      end
+    elseif ActiveView=="stops" and SelStop>0 then
+      if OrgContext==nil then DelStop(SelRoute,SelStop); SelStop=0
+      else
+        local od=OrgData[OrgContext]
+        if od then for _,r in ipairs(od.routes) do if r.n==SelRoute then table.remove(r.pts,SelStop);break end end
+          SaveData(); SetStatus("Stop removed"); SelStop=0 end
       end
     end
   end
 
-elseif cmd=="clearwps" then
-  if ActiveTab=="Personal" then
-    WaypointList={}; SelWP=""; SaveData(); SetStatus("Cleared personal WPs")
-  else
-    local od=OrgData[ActiveTab]
-    if od then od.wps={}; SelWP=""; SaveData(); SetStatus("Cleared WPs: "..ActiveTab) end
-  end
-
-elseif cmd=="clearroutes" then
-  if ActiveTab=="Personal" then
-    RouteList={}; SelRoute=""; SelStop=0; SaveData(); SetStatus("Cleared personal routes")
-  else
-    local od=OrgData[ActiveTab]
-    if od then od.routes={}; SelRoute=""; SelStop=0; SaveData(); SetStatus("Cleared routes: "..ActiveTab) end
-  end
-
-elseif cmd=="hint_add"      then SetStatus("Chat: add NAME ::pos{0,0,x,y,z}",8)
-elseif cmd=="hint_rename"   then SetStatus("Chat: rename NEWNAME",8)
-elseif cmd=="hint_setpos"   then SetStatus("Chat: setpos ::pos{0,0,x,y,z}",8)
-elseif cmd=="hint_newroute" then SetStatus("Chat: newroute NAME",8)
-elseif cmd=="hint_addstop"  then SetStatus("Chat: addstop WPname  or  addstop ::pos{...}",8)
-
--- Theme picker actions from main screen
-elseif cmd=="open_theme"    then
+elseif cmd=="open_theme" then
   ShowThemePicker=true
   local sn=GetActiveProfileName()
   if databank and databank.getStringValue("theme_p_"..sn)==""  then SaveTheme(sn,ThemeSlots) end
@@ -1505,6 +1692,15 @@ if message:find("<PushRoute>",1,true) then
   end
 end
 
+if message:find("<PushTheme>",1,true) then
+  local raw=message:gsub("<PushTheme>",""):gsub("@@@",'"')
+  local ok,th=pcall(json.decode,raw)
+  if ok and th and th.n and th.slots and #th.slots==8 then
+    local stored=StoreThemeProfileDedup(th.n,th.slots)
+    SetStatus("Received theme: "..(stored or th.n)); PushState()
+  end
+end
+
 if message:find("<SyncComplete>",1,true) then
   if PushOrgName and OrgData[PushOrgName] then
     table.sort(OrgData[PushOrgName].wps,    function(a,b) return a.n:lower()<b.n:lower() end)
@@ -1544,6 +1740,86 @@ args=*
 ]]
 local t=Trim(text); local lo=t:lower()
 
+-- ── Guided chat: consume pending action ──────────────────────
+if PendingAction~="" then
+  local pa=PendingAction; local pt=PendingTarget
+  PendingAction=""; PendingTarget=""
+  if pa=="add_wp" then
+    if ActiveView=="wps" then
+      if OrgContext==nil then AddWP(t,"") -- coords will be blank, user can setpos after
+      else
+        local od=OrgData[OrgContext]
+        if od then table.insert(od.wps,{n=t,c=""}); SaveData(); SetStatus("WP added: "..t) end
+      end
+    end
+  elseif pa=="rename" then
+    if ActiveView=="stops" and SelStop>0 then
+      -- rename the stop's label
+      local routes=GetActiveRoutes()
+      for _,r in ipairs(routes) do
+        if r.n==SelRoute and r.pts[SelStop] then
+          r.pts[SelStop].label=t; SaveData(); SetStatus("Stop renamed: "..t); break
+        end
+      end
+    elseif OrgContext==nil then
+      if ActiveView=="wps" and SelWP~="" then RenameWP(pt,t)
+      elseif ActiveView=="routes" and SelRoute~="" then RenameRoute(pt,t) end
+    else
+      local od=OrgData[OrgContext]
+      if od then
+        if ActiveView=="wps" then
+          for _,wp in ipairs(od.wps) do if wp.n==pt then wp.n=t;SelWP=t;break end end
+        else
+          for _,r in ipairs(od.routes) do if r.n==pt then r.n=t;SelRoute=t;break end end
+        end
+        SaveData(); SetStatus("Renamed to: "..t)
+      end
+    end
+  elseif pa=="set_coords" then
+    if not ParsePos(t) then SetStatus("Bad coords — need ::pos{0,0,x,y,z}",8); PushState(); return end
+    if ActiveView=="wps" and pt~="" then
+      if OrgContext==nil then SetWPCoords(pt,t)
+      else
+        local od=OrgData[OrgContext]
+        if od then for _,wp in ipairs(od.wps) do if wp.n==pt then wp.c=t;break end end
+          SaveData(); SetStatus("Coords updated") end
+      end
+    elseif ActiveView=="stops" then
+      local idx=tonumber(pt) or 0
+      for _,r in ipairs(GetActiveRoutes()) do
+        if r.n==SelRoute and r.pts[idx] then
+          r.pts[idx].c=t; SaveData(); SetStatus("Stop coords updated"); break
+        end
+      end
+    end
+  elseif pa=="new_route" then
+    if OrgContext==nil then AddRoute(t)
+    else
+      local od=OrgData[OrgContext]
+      if od then table.insert(od.routes,{n=t,pts={}}); SaveData(); SetStatus("Route created: "..t) end
+    end
+  elseif pa=="add_stop" then
+    if OrgContext==nil then AddStop(pt,t)
+    else
+      local od=OrgData[OrgContext]
+      if od then
+        for _,r in ipairs(od.routes) do
+          if r.n==pt then
+            local c,lbl=t,t
+            if not ParsePos(t) then
+              local found=false
+              for _,wp in ipairs(od.wps) do if wp.n:lower()==t:lower() then c=wp.c;lbl=wp.n;found=true;break end end
+              if not found then SetStatus("Not a WP name or ::pos{}"); PushState(); return end
+            end
+            table.insert(r.pts,{c=c,label=lbl}); SaveData(); SetStatus("Stop added"); break
+          end
+        end
+      end
+    end
+  end
+  PushState(); return
+end
+
 if lo=="help" then
   system.print("══════════════════════════════════")
   system.print("  NAV BASE v2.2  CHAT COMMANDS")
@@ -1574,28 +1850,30 @@ if lo=="help" then
   system.print("theme export       export as copyable string")
   system.print("theme import T:..  import from string")
   system.print("theme reset        restore defaults")
+  system.print("Note: ships that 'theme push' land here as new profiles automatically —")
+  system.print("      no copy/paste needed. Every ship pulls them on its next sync.")
   return
 end
 
 local tabN=t:match("^[Tt][Aa][Bb]%s+(.+)")
 if tabN then
   tabN=Trim(tabN)
-  for _,tn in ipairs(GetTabList()) do
-    if tn:lower()==tabN:lower() then
-      ActiveTab=tn; SelWP=""; SelRoute=""; SelStop=0
-      SetStatus("Tab: "..ActiveTab); PushState(); return
+  if tabN:lower()=="personal" then OrgContext=nil; SelWP=""; SelRoute=""; SelStop=0
+  else
+    for _,o in ipairs(OrgNames) do
+      if o:lower()==tabN:lower() then OrgContext=o; SelWP=""; SelRoute=""; SelStop=0; break end
     end
   end
-  SetStatus("Unknown tab: "..tabN); PushState(); return
+  SetStatus("Context: "..(OrgContext or "Personal")); PushState(); return
 end
 
 local addN,addC=t:match("^[Aa][Dd][Dd]%s+(.-)%s*(::pos%b{})")
 if addN then
   addC=Trim(addC)
   if not ParsePos(addC) then SetStatus("Provide coords: add NAME ::pos{0,0,x,y,z}",8); PushState(); return end
-  if ActiveTab=="Personal" then AddWP(addN,addC)
+  if OrgContext==nil then AddWP(addN,addC)
   else
-    local od=OrgData[ActiveTab]
+    local od=OrgData[OrgContext]
     if od then
       local found=false
       for _,wp in ipairs(od.wps) do if wp.n:lower()==addN:lower() then wp.c=addC;found=true;break end end
@@ -1609,9 +1887,9 @@ end
 local nrN=t:match("^[Nn][Ee][Ww][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
 if nrN then
   nrN=Trim(nrN)
-  if ActiveTab=="Personal" then AddRoute(nrN)
+  if OrgContext==nil then AddRoute(nrN)
   else
-    local od=OrgData[ActiveTab]
+    local od=OrgData[OrgContext]
     if od then table.insert(od.routes,{n=nrN,pts={}}); SaveData(); SetStatus("Route created: "..nrN) end
   end
   PushState(); return
@@ -1620,12 +1898,12 @@ end
 local rnN=t:match("^[Rr][Ee][Nn][Aa][Mm][Ee]%s+(.+)")
 if rnN then
   rnN=Trim(rnN)
-  if ActiveTab=="Personal" then
+  if OrgContext==nil then
     if SelWP~="" then RenameWP(SelWP,rnN)
     elseif SelRoute~="" then RenameRoute(SelRoute,rnN)
     else SetStatus("Select a WP or route first") end
   else
-    local od=OrgData[ActiveTab]
+    local od=OrgData[OrgContext]
     if od and SelWP~="" then
       for _,wp in ipairs(od.wps) do if wp.n==SelWP then wp.n=rnN;SelWP=rnN;break end end
       SaveData(); SetStatus("Renamed to: "..rnN)
@@ -1640,10 +1918,10 @@ end
 local spC=t:match("^[Ss][Ee][Tt][Pp][Oo][Ss]%s+(.*)")
 if spC then
   spC=Trim(spC)
-  if not ParsePos(spC) then SetStatus("Bad coords") PushState(); return end
+  if not ParsePos(spC) then SetStatus("Bad coords"); PushState(); return end
   if SelWP~="" then SetWPCoords(SelWP,spC)
   elseif SelRoute~="" and SelStop>0 then
-    for _,r in ipairs(RouteList) do
+    for _,r in ipairs(GetActiveRoutes()) do
       if r.n==SelRoute and r.pts[SelStop] then
         r.pts[SelStop].c=spC; SaveData(); SetStatus("Stop updated")
       end
@@ -1656,9 +1934,9 @@ local asA=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.*)")
 if asA then
   asA=Trim(asA)
   if SelRoute=="" then SetStatus("Select a route first"); PushState(); return end
-  if ActiveTab=="Personal" then AddStop(SelRoute,asA)
+  if OrgContext==nil then AddStop(SelRoute,asA)
   else
-    local od=OrgData[ActiveTab]
+    local od=OrgData[OrgContext]
     if od then
       for _,r in ipairs(od.routes) do
         if r.n==SelRoute then
@@ -1684,23 +1962,43 @@ if dsN then
 end
 
 if lo=="del" then
-  if SelWP~="" then DelWP(SelWP); SelWP=""
-  elseif SelRoute~="" and SelStop>0 then DelStop(SelRoute,SelStop); SelStop=0
-  elseif SelRoute~="" then DelRoute(SelRoute); SelRoute=""; SelStop=0
+  if SelWP~="" then
+    if OrgContext==nil then DelWP(SelWP); SelWP=""
+    else
+      local od=OrgData[OrgContext]
+      if od then for i,wp in ipairs(od.wps) do if wp.n==SelWP then table.remove(od.wps,i);break end end
+        SaveData(); SetStatus("Deleted: "..SelWP); SelWP="" end
+    end
+  elseif SelRoute~="" and SelStop>0 then
+    if OrgContext==nil then DelStop(SelRoute,SelStop); SelStop=0
+    else
+      local od=OrgData[OrgContext]
+      if od then for _,r in ipairs(od.routes) do if r.n==SelRoute then table.remove(r.pts,SelStop);break end end
+        SaveData(); SetStatus("Stop removed"); SelStop=0 end
+    end
+  elseif SelRoute~="" then
+    if OrgContext==nil then DelRoute(SelRoute); SelRoute=""; SelStop=0
+    else
+      local od=OrgData[OrgContext]
+      if od then for i,r in ipairs(od.routes) do if r.n==SelRoute then table.remove(od.routes,i);break end end
+        SaveData(); SetStatus("Deleted: "..SelRoute); SelRoute=""; SelStop=0 end
+    end
   else SetStatus("Select something first") end
   PushState(); return
 end
 
 if lo=="list" then
-  local wps=GetTabWPs()
-  system.print("─── WAYPOINTS ["..ActiveTab.."] ("..#wps..") ───")
+  local ctx=OrgContext or "Personal"
+  local wps=GetActiveWPs()
+  system.print("─── WAYPOINTS ["..ctx.."] ("..#wps..") ───")
   for i,wp in ipairs(wps) do system.print(i..".  "..wp.n.."  "..wp.c) end
   return
 end
 
 if lo=="routes" then
-  local rts=GetTabRoutes()
-  system.print("─── ROUTES ["..ActiveTab.."] ("..#rts..") ───")
+  local ctx=OrgContext or "Personal"
+  local rts=GetActiveRoutes()
+  system.print("─── ROUTES ["..ctx.."] ("..#rts..") ───")
   for i,r in ipairs(rts) do
     system.print(i..".  "..r.n.."  ("..#r.pts.." stops)")
     for j,s in ipairs(r.pts) do system.print("    "..j..".  "..(s.label or s.c)) end
@@ -1757,7 +2055,7 @@ if lo:sub(1,5)=="theme" then
   local arg=Trim(t:sub(6))
   local argLo=arg:lower()
 
-  if arg=="" then
+  if arg=="" or argLo=="show" or argLo=="list" then
     system.print("═══ THEME COLORS ════════════════════")
     for i=1,8 do
       local s=ThemeSlots[i]
@@ -1836,8 +2134,9 @@ if lo:sub(1,5)=="theme" then
   end
 
   -- theme import THEME:...
-  if arg:sub(1,6)=="THEME:" then
-    local iName,iSlots=ImportTheme(arg)
+  local importArg=arg:match("^[Ii][Mm][Pp][Oo][Rr][Tt]%s+(.+)") or arg
+  if importArg:sub(1,6)=="THEME:" then
+    local iName,iSlots=ImportTheme(importArg)
     if iName and iSlots then
       ThemeSlots=iSlots; SaveTheme(iName,iSlots); RefreshTheme()
       SetStatus("Imported: "..iName)

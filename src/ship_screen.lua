@@ -1,12 +1,12 @@
 -- ================================================================
--- NAVIGATOR SHIP - SCREEN VERSION v2.1.0
+-- NAVIGATOR SHIP - SCREEN VERSION v2.2.0
 -- Dual Universe Navigation System
 --
--- SLOT CONNECTIONS (connect in this order):
---   Slot 0: screen     (Screen Unit)
---   Slot 1: databank   (Databank)
---   Slot 2: receiver   (Receiver)
---   Slot 3: emitter    (Emitter)
+-- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
+--   Required: Screen Unit, Databank, Receiver, Emitter
+--   Optional: a 2nd Databank (Arch/Saga navdatabank)
+-- Check the Lua console after activating for a "[NAV] slot1=... slot2=..." line
+-- confirming what was detected as what.
 --
 -- Mouse-driven UI. Chat commands for editing selected items.
 -- Tabs: Personal | per org (learned from sync)
@@ -239,12 +239,11 @@ function LoadTheme()
   return data
 end
 
-function SaveTheme(name,slots)
+function StoreThemeProfile(name,slots)
   if not databank then return end
   name=name:gsub("[^%w%s_-]",""):sub(1,20)
   if name=="" then name="Default" end
   databank.setStringValue("theme_p_"..name,json.encode(slots))
-  databank.setStringValue("theme_profile_active",name)
   local raw=databank.getStringValue("theme_profile_names") or "[]"
   local ok,names=pcall(json.decode,raw)
   if not ok or type(names)~="table" then names={} end
@@ -252,6 +251,33 @@ function SaveTheme(name,slots)
   for _,n in ipairs(names) do if n==name then found=true;break end end
   if not found then table.insert(names,name) end
   databank.setStringValue("theme_profile_names",json.encode(names))
+  return name
+end
+
+function SaveTheme(name,slots)
+  local stored=StoreThemeProfile(name,slots)
+  if not databank or not stored then return end
+  databank.setStringValue("theme_profile_active",stored)
+end
+
+-- Store an incoming (network) profile without clobbering a differently-named
+-- collision — same name+same content is treated as already-known (no-op rename),
+-- same name+different content gets auto-suffixed ("Name-2", "Name-3", ...).
+function StoreThemeProfileDedup(name,slots)
+  if not databank then return end
+  name=name:gsub("[^%w%s_-]",""):sub(1,20)
+  if name=="" then name="Default" end
+  local encoded=json.encode(slots)
+  local finalName=name
+  if databank.getStringValue("theme_p_"..finalName)~="" and databank.getStringValue("theme_p_"..finalName)~=encoded then
+    local i=2
+    repeat
+      finalName=name.."-"..i
+      local existing=databank.getStringValue("theme_p_"..finalName)
+      i=i+1
+    until existing=="" or existing==encoded
+  end
+  return StoreThemeProfile(finalName,slots)
 end
 
 function DeleteTheme(name)
@@ -311,7 +337,172 @@ event=onStart()
 args=
 ]]
 
-local VERSION="v2.1.0"
+-- ── Slot auto-detect ────────────────────────────────────────────
+-- Link Screen, Databank, Receiver, Emitter to ANY of the PB's slots, in any
+-- order. A second Databank (Arch/Saga navdatabank) is optional and also goes
+-- in any slot. Detected by probing each linked element with a harmless
+-- read-only call and seeing which one succeeds — same trick as
+-- tools/databank_copy.lua uses for its two databanks. Check the Lua console
+-- on startup ("[NAV] slot1=... slot2=...") to confirm what got detected.
+do
+  -- Primary check: DU's own type introspection. getElementClass() (confirmed
+  -- present on a "Modern Screen xs" via a live field dump, 2026-09-06)
+  -- logs a deprecation warning in-game telling scripts to use getClass()
+  -- instead — try that first, fall back to the deprecated name for older
+  -- game versions that might not have getClass() yet. Either way the
+  -- returned string gets a lowercase substring match, robust to exact
+  -- naming we haven't seen across other screen/receiver/emitter variants.
+  local function classOf(s)
+    local ok,cls=pcall(function() return s.getClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    ok,cls=pcall(function() return s.getElementClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    return nil
+  end
+  local function probe(s)
+    if not s then return nil end
+    local cls=classOf(s)
+    if cls then
+      if cls:find("screen")   then return "screen" end
+      if cls:find("databank") then return "databank" end
+      if cls:find("receiver") then return "receiver" end
+      if cls:find("emitter")  then return "emitter" end
+    end
+    -- Fallback for class names this doesn't recognize, or if
+    -- getElementClass() itself isn't available on some element. Previously
+    -- getRenderScript()/getScriptInput() were the primary screen check —
+    -- confirmed via that field dump that NEITHER getter actually exists on
+    -- a "Modern Screen xs" (only the setter halves do), which is why the
+    -- old capability-probe silently misclassified a real screen as
+    -- "unrecognized". getScriptOutput() (the real read counterpart DU
+    -- screens expose) is checked first here as the better fallback.
+    if pcall(function() return s.getScriptOutput() end)
+      or pcall(function() return s.getRenderScript() end)
+      or pcall(function() return s.getScriptInput() end) then return "screen" end
+    if pcall(function() return s.getChannelList() end) then return "receiver" end
+    if pcall(function() return s.getKeyList() end)      then return "databank" end
+    return "emitter"
+  end
+  -- Best-effort: read the element's in-game display name (works if you've
+  -- renamed it via right-click -> Rename). Wrapped in pcall so if this isn't
+  -- the right method on some element type, it just silently returns nil and
+  -- everything else still works — no risk from guessing wrong here.
+  local function tryName(s)
+    local ok,n=pcall(function() return s.getName() end)
+    if ok and n and n~="" then return n end
+    return nil
+  end
+  -- Literal slotN references only — DU's sandbox does not support building
+  -- these names dynamically (e.g. _ENV["slot"..i]) and silently fails.
+  -- Players connect by clicking the PB then the element (DU fills the lowest
+  -- free slot automatically), so linked slots are always contiguous from 1 —
+  -- plain ipairs is fine here, no gaps to worry about.
+  local raw={slot1,slot2,slot3,slot4,slot5,slot6,slot7,slot8,slot9,slot10}
+  local banks={}
+  for i,s in ipairs(raw) do
+    local kind=probe(s)
+    if kind=="databank" then table.insert(banks,s)
+    elseif kind=="receiver" and not receiver then receiver=s
+    elseif kind=="emitter"  and not emitter  then emitter=s
+    elseif kind=="screen"   and not screen   then screen=s
+    end
+  end
+  if #banks==1 then
+    databank=banks[1]
+  elseif #banks>=2 then
+    -- Two databanks linked. Prefer a naming hint first — rename the Arch/Saga
+    -- databank in-game to include "arch", "saga", "hud", or "nav2" and it's
+    -- recognized regardless of contents. Otherwise fall back to whichever
+    -- already holds Navigator's own keys, and finally to slot order if both
+    -- are blank and unnamed (first found = primary).
+    local function looksLikeHudBank(s)
+      local nm=tryName(s)
+      if not nm then return false end
+      local lo=nm:lower()
+      return lo:find("arch") or lo:find("saga") or lo:find("hud") or lo:find("nav2")
+    end
+    local navKeys={"personal_wps","theme_profile_active","theme_profile_names","org_names"}
+    local function looksPrimary(d)
+      for _,k in ipairs(navKeys) do
+        local ok,v=pcall(function() return d.getStringValue(k) end)
+        if ok and v and v~="" then return true end
+      end
+      return false
+    end
+    -- Real Arch/Saga data is just as valid a positive signal for navdatabank
+    -- as Navigator's own keys are for primary — check for it explicitly so
+    -- an actually-in-use HUD databank isn't mistaken for foreign/wrong data.
+    local hudKeys={"SavedLocations","SagaRoutes","SagaConf"}
+    local function looksLikeHudData(d)
+      for _,k in ipairs(hudKeys) do
+        local ok,v=pcall(function() return d.getStringValue(k) end)
+        if ok and v and v~="" then return true end
+      end
+      -- Arch stores a large number of keys with "Auto" in the name (per a
+      -- live Databank_Inspector dump, 2026-09-06) — we don't know every
+      -- exact key it uses, so scan the key list itself rather than relying
+      -- on a fixed candidate list. (Navigator's own "autofly" key on
+      -- navdatabank also matches this — harmless, since that key only ever
+      -- gets written to the navdatabank side anyway.)
+      local ok,list=pcall(function() return d.getKeyList() end)
+      if ok and type(list)=="table" then
+        for _,k in ipairs(list) do
+          if tostring(k):lower():find("auto") then return true end
+        end
+      end
+      return false
+    end
+    -- Distinguishes "genuinely blank" from "has SOME data, just not ours or
+    -- Arch/Saga's" — e.g. a databank reused from another script. The latter
+    -- is worth flagging louder since it suggests the wrong element may be
+    -- linked, not just an ambiguous fresh install.
+    local function hasAnyData(d)
+      local ok,list=pcall(function() return d.getKeyList() end)
+      return ok and type(list)=="table" and #list>0
+    end
+    local pickedBy
+    if looksLikeHudBank(banks[2]) and not looksLikeHudBank(banks[1]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="name"
+    elseif looksLikeHudBank(banks[1]) and not looksLikeHudBank(banks[2]) then
+      databank=banks[2]; navdatabank=banks[1]; pickedBy="name"
+    elseif looksPrimary(banks[2]) and not looksPrimary(banks[1]) then
+      databank=banks[2]; navdatabank=banks[1]; pickedBy="contents"
+    elseif looksPrimary(banks[1]) and not looksPrimary(banks[2]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="contents"
+    elseif looksLikeHudData(banks[2]) and not looksLikeHudData(banks[1]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="contents"
+    elseif looksLikeHudData(banks[1]) and not looksLikeHudData(banks[2]) then
+      databank=banks[2]; navdatabank=banks[1]; pickedBy="contents"
+    elseif hasAnyData(banks[1]) or hasAnyData(banks[2]) then
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="foreign-data"
+    else
+      databank=banks[1]; navdatabank=banks[2]; pickedBy="guess"
+    end
+    -- SlotWarningMsg is a plain global (not local) so the code further down
+    -- this same handler — after StatusMsg="" resets it — can pick it up and
+    -- show it on the screen too, not just the Lua console. See below.
+    if pickedBy=="guess" then
+      system.print("[NAV] NOTE: 2 databanks linked, both blank and unnamed — guessed which is which by slot order (see below). If that's backwards, rename the Arch/Saga one in-game (right-click -> Rename) to include \"arch\", \"saga\", or \"hud\", then reactivate the PB.")
+      SlotWarningMsg="Check console: DB guess"
+    elseif pickedBy=="foreign-data" then
+      system.print("[NAV] WARNING: 2 databanks linked, but one has existing data that isn't Navigator's or Arch/Saga's — double check the right elements are linked (see slot list below) before trusting this setup. Guessed by slot order for now.")
+      SlotWarningMsg="Check console: DB link?"
+    end
+  end
+  local dbg={}
+  for i,s in ipairs(raw) do
+    local role=(s==databank and "databank") or (s==navdatabank and "navdatabank")
+      or (s==receiver and "receiver") or (s==emitter and "emitter")
+      or (s==screen and "screen") or "unrecognized"
+    local nm=tryName(s)
+    local cls=(role=="unrecognized") and classOf(s) or nil
+    table.insert(dbg,"slot"..i.."="..role..(nm and ("("..nm..")") or "")..(cls and ("[class:"..cls.."]") or ""))
+  end
+  system.print("[NAV] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
+  if not screen then system.print("[NAV] WARNING: no Screen Unit detected — this is the screen version, link one") end
+end
+
+local VERSION="v2.2.0"
 Atlas        =nil
 CustomAtlas ="atlas"   --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
@@ -331,6 +522,7 @@ OrgData         = {}   -- {orgName:{wps=[],routes=[]}}
 NavTarget       = nil  -- {t,n,c,tab,stopIdx}
 ShipID          = ""
 StatusMsg       = ""; StatusExpiry=0
+if SlotWarningMsg then SetStatus(SlotWarningMsg,20) end
 ActiveTab       = 0    -- 0=personal, 1..N=org index
 SelWP           = ""
 SelRoute        = ""
@@ -349,6 +541,8 @@ PushQueueCh  = ""
 PushQueueIdx = 1
 PushSending  = false
 AutoFly      = false
+PendingAction   = ""   -- guided chat action (rename/setpos/newroute/addstop)
+PendingTarget   = ""   -- context for pending action
 
 -- Theme state
 ShowThemePicker = false
@@ -650,7 +844,7 @@ end
 
 function RequestSync(ch)
   if not emitter then SetStatus("No emitter") return end
-  SyncingChannel=ch; UpdateChannels()
+  if ch~=BaseChannel then SyncingChannel=ch; UpdateChannels() end
   emitter.send(ch,"<RequestSync>"..ShipID.."|pid:"..GetPlayerID().."|pname:"..GetPlayerName())
   SetStatus("Sync requested on "..ch)
 end
@@ -825,10 +1019,18 @@ function BuildScreenScript()
     for _,s in ipairs(list) do table.insert(t, string.format("%q",s)) end
     return "{"..table.concat(t,",").."}"
   end
+  local function luaPtList(list)
+    local t={}
+    for _,p in ipairs(list) do
+      local lbl=p.label or ""
+      table.insert(t, string.format("{c=%q,label=%q}", p.c or "", lbl))
+    end
+    return "{"..table.concat(t,",").."}"
+  end
 
   local wpLit  = luaList(wps)
   local rtLit  = luaRoute(routes)
-  local ptLit  = luaList(selRoutePts or {})
+  local ptLit  = luaPtList(selRoutePts or {})
   local tnLit  = luaStrList(tabNames)
   local atLit  = luaList(atlasBodies)
   local orgChPairs={}
@@ -1071,9 +1273,12 @@ end
 if SelStop>0 and SelRT~="" then
   -- STOP LIST VIEW
   PH(rtX,rtW,PHr,PHg,PHb)
+  local hdrHv=(cx>=rtX and cx<rtX+rtW and cy>=CON_Y and cy<CON_Y+C)
+  if hdrHv then setNextFillColor(Lp,1,1,1,0.12) addBox(Lp,rtX,CON_Y,rtW,C) end
   setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Left,AlignV_Middle)
   addText(Lh,fH,"◄ "..SelRT.." STOPS",rtX+8,CON_Y+C/2)
   addLine(Ll,rtX,CON_Y+C,rtX+rtW,CON_Y+C)
+  if hdrHv and pr then Out=json.encode({"closestops"}) end
   local maxSR=math.max(0,#STOPS-vis+1) local sCR=math.max(0,math.min(ScrollRT,maxSR))
   for i=1,vis do
     local idx=i+sCR if idx>#STOPS then break end
@@ -1169,18 +1374,24 @@ else
 end
 -- Buttons
 local bX=nvX+5 local bW=nvW-10 local bH=26 local bG=4
-local by=SH-32-(bH+bG)*10-32
-if Btn("★ MARK WP HERE",         bX,by,bW,bH,true)        then Out=json.encode({"mark_wp"})         end by=by+bH+bG
-if Btn("★ MARK ROUTE STOP",      bX,by,bW,bH,SelRT~="")   then Out=json.encode({"mark_stop"})        end by=by+bH+bG
-if Btn("⎘ SHOW COORDS",          bX,by,bW,bH,SelWP~="")   then Out=json.encode({"show_coords",SelWP}) end by=by+bH+bG
+local by=SH-32-(bH+bG)*14-32
+local hasSelItem=(SelWP~="" or SelRT~="")
+local hasCoordTarget=(SelWP~="" or (SelRT~="" and SelStop>0))
+if Btn("★ MARK WP (HERE)",       bX,by,bW,bH,true)          then Out=json.encode({"mark_wp"})           end by=by+bH+bG
+if Btn("★ MARK ROUTE STOP",      bX,by,bW,bH,SelRT~="")     then Out=json.encode({"mark_stop"})          end by=by+bH+bG
+if Btn("⎘ PRINT COORDS",         bX,by,bW,bH,SelWP~="")     then Out=json.encode({"print_coords",SelWP}) end by=by+bH+bG
+if Btn("NEW ROUTE",               bX,by,bW,bH,true)          then Out=json.encode({"newroute"})           end by=by+bH+bG
+if Btn("ADD STOP",                bX,by,bW,bH,SelRT~="")     then Out=json.encode({"addstop"})            end by=by+bH+bG
+if Btn("RENAME",                  bX,by,bW,bH,hasSelItem)    then Out=json.encode({"rename"})             end by=by+bH+bG
+if Btn("SET COORDS",              bX,by,bW,bH,hasCoordTarget) then Out=json.encode({"setcoords"})         end by=by+bH+bG
 if ActiveTab==ATLAS_TAB then
-  if Btn("▶ NAVIGATE TO BODY",   bX,by,bW,bH,SelWP~="")   then Out=json.encode({"nav_atlas",SelWP})  end by=by+bH+bG
+  if Btn("▶ NAVIGATE TO BODY",   bX,by,bW,bH,SelWP~="")     then Out=json.encode({"nav_atlas",SelWP})    end by=by+bH+bG
   by=by+bH+bG  -- skip route button slot
 else
-  if Btn("▶ NAVIGATE WP",        bX,by,bW,bH,SelWP~="")   then Out=json.encode({"nav_wp",SelWP})     end by=by+bH+bG
-  if Btn("▶ NAVIGATE ROUTE",     bX,by,bW,bH,SelRT~="")   then Out=json.encode({"nav_rt",SelRT})     end by=by+bH+bG
+  if Btn("▶ NAVIGATE WP",        bX,by,bW,bH,SelWP~="")     then Out=json.encode({"nav_wp",SelWP})       end by=by+bH+bG
+  if Btn("▶ NAVIGATE ROUTE",     bX,by,bW,bH,SelRT~="")     then Out=json.encode({"nav_rt",SelRT})       end by=by+bH+bG
 end
-if Btn("▶▶ NEXT STOP",           bX,by,bW,bH,nType=="route") then Out=json.encode({"next_stop"})     end by=by+bH+bG
+if Btn("▶▶ NEXT STOP",           bX,by,bW,bH,nType=="route") then Out=json.encode({"next_stop"})         end by=by+bH+bG
 do local afLabel=AutoFly and "AUTO FLY ●" or "AUTO FLY ○"
   local hv=(cx>=bX and cx<bX+bW and cy>=by and cy<by+bH)
   if AutoFly then
@@ -1195,14 +1406,14 @@ do local afLabel=AutoFly and "AUTO FLY ●" or "AUTO FLY ○"
   end
   if hv and pr then Out=json.encode({AutoFly and "autofly_off" or "autofly_on"}) end
 end by=by+bH+bG
-if Btn("✕ CLEAR NAV",            bX,by,bW,bH,nName~="")   then Out=json.encode({"clear_nav"})        end by=by+bH+bG
+if Btn("✕ CLEAR NAV",            bX,by,bW,bH,nName~="")     then Out=json.encode({"clear_nav"})          end by=by+bH+bG
 local isOrgTab=(ActiveTab>0 and ActiveTab~=ATLAS_TAB)
 if isOrgTab then
-  if Btn("⟳ SYNC ORG",           bX,by,bW,bH,true)        then Out=json.encode({"sync","org"})       end by=by+bH+bG
-  if Btn("⬆ PUSH TO ORG",        bX,by,bW,bH,true)        then Out=json.encode({"push","org"})       end by=by+bH+bG
+  if Btn("⟳ SYNC ORG",           bX,by,bW,bH,true)          then Out=json.encode({"sync","org"})         end by=by+bH+bG
+  if Btn("⬆ PUSH TO ORG",        bX,by,bW,bH,true)          then Out=json.encode({"push","org"})         end by=by+bH+bG
 else
-  if Btn("⟳ SYNC BASE",          bX,by,bW,bH,true)        then Out=json.encode({"sync","base"})      end by=by+bH+bG
-  if Btn("⬆ PUSH TO BASE",       bX,by,bW,bH,true)        then Out=json.encode({"push","base"})      end by=by+bH+bG
+  if Btn("⟳ SYNC BASE",          bX,by,bW,bH,true)          then Out=json.encode({"sync","base"})        end by=by+bH+bG
+  if Btn("⬆ PUSH TO BASE",       bX,by,bW,bH,true)          then Out=json.encode({"push","base"})        end by=by+bH+bG
 end
 if Btn("▶ FIRST ORG SYNC",bX,by,bW,bH,true) then Out=json.encode({"firstsync_hint"}) end
 ]]
@@ -1663,8 +1874,9 @@ elseif act=="scrollrt"  then ScrollRT=math.max(0,ScrollRT+(d[2] or 1))
 elseif act=="tab"       then ActiveTab=d[2]; SelWP=""; SelRoute=""; SelStop=0; ScrollWP=0; ScrollRT=0
 elseif act=="selwp"     then SelWP=(SelWP==d[2] and "" or d[2]); SelRoute=""; SelStop=0
 elseif act=="selrt"     then
-  if SelRoute==d[2] then SelStop=(SelStop==0 and 1 or 0)
-  else SelRoute=d[2]; SelStop=0; SelWP="" end
+  if SelRoute==d[2] and SelStop==0 then SelRoute=""; SelWP=""  -- click selected route = deselect
+  else SelRoute=d[2]; SelStop=1; SelWP="" end    -- click route = open stops immediately
+elseif act=="closestops" then SelStop=0          -- back button: return to route list, keep selection
 elseif act=="selstop"   then SelStop=(SelStop==d[2] and 0 or d[2])
 elseif act=="nav_wp"    then SetNavWP(d[2],ActiveTab)
 elseif act=="nav_rt"    then SetNavRoute(d[2],ActiveTab,1)
@@ -1683,13 +1895,44 @@ elseif act=="nav_atlas" then
       end
     end
   end
-elseif act=="show_coords" then
+elseif act=="print_coords" then
   local wname=d[2]
   if wname then
     local wps=GetTabWPs()
     for _,wp in ipairs(wps) do
-      if wp.n==wname then system.print("[NAV] "..wp.n.."  "..wp.c); break end
+      if wp.n==wname then
+        system.print("[WP] "..wp.n)
+        system.print(wp.c)
+        break
+      end
     end
+  end
+elseif act=="rename" then
+  if SelWP~="" then
+    PendingAction="rename"; PendingTarget="wp"
+    SetStatus("Type new WP name in chat")
+  elseif SelRoute~="" and SelStop>0 then
+    PendingAction="rename"; PendingTarget=tostring(SelStop)
+    SetStatus("Type new stop name in chat")
+  elseif SelRoute~="" then
+    PendingAction="rename"; PendingTarget="route"
+    SetStatus("Type new route name in chat")
+  end
+elseif act=="setcoords" then
+  if SelWP~="" then
+    PendingAction="setpos"; PendingTarget="wp"
+    SetStatus("Paste ::pos{} coords in chat")
+  elseif SelRoute~="" and SelStop>0 then
+    PendingAction="setpos"; PendingTarget=tostring(SelStop)
+    SetStatus("Paste ::pos{} coords in chat")
+  end
+elseif act=="newroute" then
+  PendingAction="newroute"
+  SetStatus("Type new route name in chat")
+elseif act=="addstop" then
+  if SelRoute~="" then
+    PendingAction="addstop"
+    SetStatus("Type WP name or ::pos{} in chat")
   end
 elseif act=="lock_wp" then
   local wname=d[2]
@@ -1825,7 +2068,7 @@ if message:find("<OrgSyncStart>",1,true) then
 end
 
 if message:find("<SyncCount>",1,true) then
-  SyncReceived=0; SyncContext="personal"
+  SyncReceived=0; SyncContext="personal"; SyncOrgName=""
   local n=tonumber((message:gsub("<SyncCount>",""))) or 0
   SetStatus("Syncing "..n.." items from "..(isOrg and (SyncOrgName~="" and SyncOrgName or "org") or "base").."...")
 end
@@ -1870,6 +2113,14 @@ if message:find("<SyncRoute>",1,true) then
     local found=false
     for i,e in ipairs(list) do if e.n:lower()==r.n:lower() then list[i]=r;found=true;break end end
     if not found then table.insert(list,r) end
+  end
+end
+if message:find("<SyncTheme>",1,true) then
+  local raw=message:gsub("<SyncTheme>",""):gsub("@@@",'"')
+  local ok,th=pcall(json.decode,raw)
+  if ok and th and th.n and th.slots and #th.slots==8 then
+    SyncReceived=(SyncReceived or 0)+1
+    StoreThemeProfileDedup(th.n,th.slots)
   end
 end
 
@@ -1921,6 +2172,41 @@ args=*
 ]]
 local t=Trim(text); local lo=t:lower()
 
+-- PendingAction: guided chat from button press
+if PendingAction~="" then
+  local pa=PendingAction; local pt=PendingTarget
+  PendingAction=""; PendingTarget=""
+  if pa=="rename" then
+    if pt=="wp" then TabRenameWP(SelWP,t,ActiveTab)
+    elseif pt=="route" then TabRenameRoute(SelRoute,t,ActiveTab)
+    else
+      local si=tonumber(pt)
+      if si then
+        local routes=(ActiveTab==0) and PersonalRoutes or (OrgData[OrgNames[ActiveTab]] and OrgData[OrgNames[ActiveTab]].routes) or {}
+        for _,r in ipairs(routes) do
+          if r.n==SelRoute and r.pts[si] then r.pts[si].label=t; SaveData(); SetStatus("Stop "..si.." renamed") end
+        end
+      end
+    end
+  elseif pa=="setpos" then
+    if not ParsePos(t) then SetStatus("Bad coords — use ::pos{0,0,x,y,z}")
+    elseif pt=="wp" then TabAddWP(SelWP,t,ActiveTab)
+    else
+      local si=tonumber(pt)
+      if si then
+        local routes=(ActiveTab==0) and PersonalRoutes or (OrgData[OrgNames[ActiveTab]] and OrgData[OrgNames[ActiveTab]].routes) or {}
+        for _,r in ipairs(routes) do
+          if r.n==SelRoute and r.pts[si] then r.pts[si].c=t; SaveData(); SetStatus("Stop "..si.." updated") end
+        end
+      end
+    end
+  elseif pa=="newroute" then TabAddRoute(t,ActiveTab)
+  elseif pa=="addstop" then
+    if SelRoute~="" then AddStop(SelRoute,t,ActiveTab) end
+  end
+  DrawScreen(); return
+end
+
 if lo=="help" then
   system.print("═══════════════════════════════════════")
   system.print("  NAVIGATOR v2.1  CHAT COMMANDS")
@@ -1966,6 +2252,7 @@ if lo=="help" then
   system.print("theme profiles     list saved profiles")
   system.print("theme export       export as copyable string")
   system.print("theme import T:..  import from string")
+  system.print("theme push         send theme to base (no copy/paste — pulled on next sync)")
   system.print("theme reset        restore defaults")
   return
 end
@@ -2222,7 +2509,7 @@ if lo:sub(1,5)=="theme" then
   local arg=Trim(t:sub(6))
   local argLo=arg:lower()
 
-  if arg=="" then
+  if arg=="" or argLo=="show" or argLo=="list" then
     system.print("══��� THEME COLORS ════════════════════")
     for i=1,8 do
       local s=ThemeSlots[i]
@@ -2233,7 +2520,7 @@ if lo:sub(1,5)=="theme" then
     end
     system.print("  Profile: "..GetActiveProfileName())
     system.print("  theme ELEMENT #HEX | R G B")
-    system.print("  theme save/load/delete/profiles/export/import/reset/rename")
+    system.print("  theme save/load/delete/profiles/export/import/push/reset/rename")
     DrawScreen(); return
   end
 
@@ -2301,12 +2588,22 @@ if lo:sub(1,5)=="theme" then
   end
 
   -- theme import THEME:...
-  if arg:sub(1,6)=="THEME:" then
-    local iName,iSlots=ImportTheme(arg)
+  local importArg=arg:match("^[Ii][Mm][Pp][Oo][Rr][Tt]%s+(.+)") or arg
+  if importArg:sub(1,6)=="THEME:" then
+    local iName,iSlots=ImportTheme(importArg)
     if iName and iSlots then
       ThemeSlots=iSlots; SaveTheme(iName,iSlots); RefreshTheme()
       SetStatus("Imported: "..iName)
     else SetStatus("Invalid import string") end
+    DrawScreen(); return
+  end
+
+  -- theme push (send active theme to base, no chat copy/paste needed)
+  if argLo=="push" then
+    if not emitter then SetStatus("No emitter") else
+      emitter.send(BaseChannel,"<PushTheme>"..json.encode({n=GetActiveProfileName(),slots=ThemeSlots}):gsub('"',"@@@"))
+      SetStatus("Theme pushed to base: "..GetActiveProfileName())
+    end
     DrawScreen(); return
   end
 

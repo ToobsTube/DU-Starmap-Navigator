@@ -57,7 +57,7 @@ These are computed automatically — you do not need to set them:
 - **Navigator Ship Screen** — click `[THEME]` in footer
 - **Navigator Base** �� click `[THEME]` in footer
 - **Navigator OrgBase Admin** — click `[THEME]` in footer
-- **Navigator Ship NoScreen** — press `Alt+0` (requires optional screen linked to Slot 3)
+- **Navigator Ship NoScreen** — press `Alt+0` (requires an optional Screen Unit linked to any slot — auto-detected)
 
 ### Picker Layout
 
@@ -114,9 +114,11 @@ All theme commands start with `theme`. Available on all scripts except OrgBase S
 
 ```
 theme
+theme show
+theme list
 ```
 
-Prints all 8 element colors with their HSV values, hex codes, and the active profile name.
+All three print the same thing: all 8 element colors with their HSV values, hex codes, and the active profile name.
 
 ### Setting Colors by Hex
 
@@ -180,6 +182,20 @@ The theme is saved to the local databank and applied immediately.
 3. Switch to the Ship NoScreen PB, type `theme import ` and paste the line
 4. Both PBs now use the same theme
 
+### Pushing Themes Through the Databank (No Copy/Paste)
+
+Copying an export string out of the Lua chat window is finicky. If your ship talks to a personal base (the normal `sync`/`push` setup), you can skip it entirely:
+
+```
+theme push
+```
+
+Sends your ship's active theme straight to your base over the emitter/receiver channel, where it's stored as a saved profile. Any ship (including this one, or a different ship) that later types `sync` automatically pulls down every theme profile the base is holding — they show up in `theme profiles` and you load one with `theme load NAME`.
+
+Pushing/syncing never changes what's currently displayed on either end — it only adds the theme to the databank's list of saved profiles. You still explicitly `theme load NAME` to apply one. If a pushed name collides with a differently-colored profile already saved under that name, it's stored under an auto-suffixed name instead (`Name-2`, `Name-3`, ...) rather than overwriting it; pushing/syncing the same profile again does not create more duplicates.
+
+This only works between ships and a **personal base** (`base.lua`) — org bases don't relay ship themes.
+
 ---
 
 ## Per-Script Details
@@ -193,9 +209,9 @@ The theme is saved to the local databank and applied immediately.
 ### Navigator Ship NoScreen (`ship_noscreen.lua`)
 
 - **Default theme**: Same cyan/blue as Ship Screen
-- **Picker access**: Link a screen to **Slot 3** (optional), then press `Alt+0` to toggle
+- **Picker access**: Link a Screen Unit to any slot (optional, auto-detected), then press `Alt+0` to toggle
 - **Chat commands**: Always available regardless of screen
-- **Slot connections**: Slot 0 = Databank, Slot 1 = Receiver, Slot 2 = Emitter, Slot 3 = Screen (optional)
+- **Slot connections**: Databank, Receiver, Emitter, and an optional Screen Unit go in any slot — auto-detected at startup (see INSTRUCTIONS.md)
 - **Databank keys**: Same `theme_` prefix as Ship Screen
 
 ### Navigator Base (`base.lua`)
@@ -262,7 +278,7 @@ The `AccentR/G/B` export parameters still exist for backwards compatibility. The
 
 - **Live preview**: Color changes apply instantly to both the preview swatch and the main UI as you drag — no need to close the picker to see the effect. The left half of the swatch shows your last saved color; the right half shows the current live change.
 - **Fine-tuning**: The SV grid gives you 256 possible shade variations per hue. For exact colors, use chat: `theme accent #1A8CCC`.
-- **Sharing across constructs**: Use `theme export` / `theme import` to copy themes between ships, bases, or even between friends.
+- **Sharing across constructs**: Use `theme export` / `theme import` to copy themes between ships, bases, or even between friends. If your ship syncs with a personal base, `theme push` skips the copy/paste entirely — see "Pushing Themes Through the Databank" above.
 - **Org consistency**: Set the theme on the OrgBase Admin PB — the Sync PB inherits it automatically. All org members see the same colors when they sync.
 - **Safe to experiment**: Use `theme reset` to go back to defaults at any time. Or save your current theme first with `theme save Backup` before experimenting.
 - **Profile naming**: Profile names can contain letters, numbers, spaces, underscores, and hyphens. Maximum 20 characters.

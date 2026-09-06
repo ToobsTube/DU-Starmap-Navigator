@@ -1,4 +1,4 @@
-# DU Starmap Navigator v2.0 — Setup & User Guide
+# DU Starmap Navigator v2.2 — Setup & User Guide
 
 ## Overview
 
@@ -50,49 +50,34 @@ You need TWO programming boards at the base:
 
 ## Slot Connections
 
-Connect slots **in exactly this order** (right-click PB → Configure → drag elements to slots).
+All five PBs use **slot auto-detection** — link the elements they need to any of the PB's slots, in any order. At startup, each script probes every linked element and figures out what it is; there's no fixed slot-number table to follow.
 
-### Navigator_Ship_Screen
-| Slot | Element |
-|------|---------|
-| 0 | Screen Unit |
-| 1 | Databank |
-| 2 | Receiver |
-| 3 | Emitter |
-| 4 | HUD Integration Databank *(optional — shared with your Arch HUD or Saga HUD control seat)* |
+**Navigator_Ship_Screen needs:** Screen Unit, Databank, Receiver, Emitter, plus an optional 2nd Databank (shared with Arch HUD or Saga HUD, for HUD integration).
 
-### Navigator_Ship_NoScreen
-| Slot | Element |
-|------|---------|
-| 0 | Databank |
-| 1 | Receiver |
-| 2 | Emitter |
-| 3 | Screen Unit *(optional — for Theme Editor only)* |
-| 4 | HUD Integration Databank *(optional — shared with your Arch HUD or Saga HUD control seat)* |
+**Navigator_Ship_NoScreen needs:** Databank, Receiver, Emitter, plus an optional Screen Unit (for the mouse-driven Theme Editor only) and an optional 2nd Databank (same Arch/Saga HUD integration purpose).
 
-### Navigator_Base
-| Slot | Element |
-|------|---------|
-| 0 | Screen Unit |
-| 1 | Databank |
-| 2 | Receiver |
-| 3 | Emitter |
+**Navigator_Base needs:** Screen Unit, Databank, Receiver, Emitter.
 
-### Navigator_OrgBase_Admin
-| Slot | Element |
-|------|---------|
-| 0 | Screen Unit |
-| 1 | Databank (same databank as Sync PB) |
+**Navigator_OrgBase_Admin needs:** Screen Unit, Databank (the same physical databank as the Sync PB — see below). No Receiver/Emitter — the Admin PB doesn't talk to ships directly, that's the Sync PB's job.
 
-### Navigator_OrgBase_Sync
-| Slot | Element |
-|------|---------|
-| 0 | Screen Unit |
-| 1 | Databank (same databank as Admin PB) |
-| 2 | Receiver |
-| 3 | Emitter |
+**Navigator_OrgBase_Sync needs:** Screen Unit, Databank (the same physical databank as the Admin PB), Receiver, Emitter.
 
-> **Important:** The Admin and Sync PBs must share the **same physical databank**. The Admin writes data, the Sync reads and serves it to ships.
+After activating, check the Lua console — it prints a confirmation line such as:
+```
+[NAV] slot1=databank  slot2=receiver  slot3=emitter  slot5=navdatabank
+```
+(`[BASE]` on Navigator_Base, `[ORG-ADMIN]` on Navigator_OrgBase_Admin, `[ORG-SYNC]` on Navigator_OrgBase_Sync.) Only linked slots are listed. Each element shows the role it was detected as (`databank`, `navdatabank`, `receiver`, `emitter`, `screen`), or `unrecognized` if it couldn't identify what's linked there — in which case double-check that slot actually holds one of the supported element types.
+
+**How the two databanks are told apart (ship PBs only):** if only one Databank is linked, it's used as the primary. If two are linked:
+1. **Naming hint (most reliable):** if you've renamed the Arch/Saga databank in-game (right-click the element → Rename) to include "arch", "saga", "hud", or "nav2" anywhere in the name, it's recognized as `navdatabank` regardless of what's in it. Recommended, especially for a brand-new setup where both databanks start out empty. Confirmed working in-game 2026-09-06.
+2. **Contents:** otherwise, whichever one already has Navigator's own data in it (waypoints, theme, etc.) is treated as primary and the other as `navdatabank`.
+3. **Slot order (last resort):** if neither hint applies, it falls back to slot order (first found = primary) — and tells you it did, both in the Lua console **and** on the ship's own display (AR HUD status line or screen footer, whichever this PB has), so you don't have to be watching Lua chat to notice:
+   - Both databanks completely blank and unnamed → `Check console: DB guess` on the HUD/screen, full detail in the console.
+   - One of them has *some* data, just not Navigator's or Arch/Saga's (e.g. a databank reused from another script) → `Check console: DB link?` on the HUD/screen — this is the stronger warning, since it suggests the wrong element may be linked rather than just an ambiguous fresh install.
+
+The console line shows each linked element's detected name in parentheses when available, e.g. `slot5=navdatabank(ArchDB)` — use it to confirm it picked correctly, and if not, just swap which physical databank goes to your Arch/Saga seat (or rename it).
+
+> **Important:** The Admin and Sync PBs must share the **same physical databank**. The Admin writes data, the Sync reads and serves it to ships. This still works with auto-detect — it's the same physical element being linked to both PBs, regardless of which slot number it lands in on each.
 
 ---
 
@@ -220,8 +205,8 @@ For a second org, just repeat: type `firstsync CHANNEL` with the second org's ch
 The screen has three panels:
 
 - **Left — Waypoints:** Click a waypoint to select it.
-- **Middle — Routes/Stops:** Click a route to select it. Click again to expand stops.
-- **Right — Navigation + Buttons:** Shows your current nav target, distance, and travel time.
+- **Middle — Routes/Stops:** Click a route to open its stops. Click the `◄ RouteName STOPS` header to go back to the route list.
+- **Right — Navigation + Buttons:** Shows your current nav target, distance, travel time, and action buttons.
 
 ### Tabs
 - **Personal** — your private waypoints
@@ -231,14 +216,18 @@ The screen has three panels:
 ### Buttons
 | Button | What it does |
 |--------|-------------|
-| MARK WP HERE | Saves your current position as a new waypoint |
-| MARK ROUTE STOP | Adds your current position as a stop on the selected route |
+| MARK WP (HERE) | Saves your current ship position as a new waypoint with an auto-generated name |
+| MARK ROUTE STOP | Adds your current position as the next stop on the selected route |
+| PRINT COORDS | Prints the selected waypoint's coordinates to Lua chat as a clickable nav marker |
+| NEW ROUTE | Prompts you in chat to type a name, then creates an empty route |
+| ADD STOP | Prompts you in chat to type a WP name or `::pos{}`, then adds it to the selected route |
+| RENAME | Prompts you in chat to type a new name for the selected WP, route, or stop |
+| SET COORDS | Prompts you in chat to paste `::pos{}` coords for the selected WP or stop |
 | NAVIGATE WP | Sets the selected waypoint as your nav target |
 | NAVIGATE ROUTE | Starts the selected route from stop 1 |
 | NEXT STOP | Advance to the next route stop |
 | AUTO FLY | Toggle automatic route flying — Navigator advances stops and engages autopilot automatically |
 | CLEAR NAV | Removes your current nav target |
-| SHOW COORDS | Prints the selected waypoint's coordinates to the Lua console for copying |
 | SYNC BASE | Pulls waypoints/routes from your personal base |
 | PUSH TO BASE | Sends your waypoints/routes to your personal base |
 | ORG SYNC | Pulls waypoints from the org on the currently active tab |
@@ -247,14 +236,24 @@ The screen has three panels:
 | THEME | Opens the Theme Editor color picker |
 | LK *(in waypoint list)* | Toggle waypoint lock — locked WPs show an LK badge and are excluded from push/sync |
 
+### Guided Chat Buttons
+
+NEW ROUTE, ADD STOP, RENAME, and SET COORDS work by prompting you in chat. When you click one, a status message appears telling you what to type. Your next message in Lua chat is consumed as the input — normal commands are bypassed until you respond (or until the PB restarts if you want to cancel).
+
+**Example — rename a waypoint:**
+1. Click the waypoint in the left panel to select it.
+2. Click **RENAME**.
+3. Status bar shows `Type new WP name in chat`.
+4. Type the new name in Lua chat and press Enter.
+
 ### Chat Commands (screen version)
-Type these in Lua chat while the PB is running:
+Type these in Lua chat while the PB is running. Most editing actions can also be triggered by the on-screen buttons, which prompt you for input rather than requiring you to remember command syntax.
 
 | Command | Description |
 |---------|-------------|
 | `add NAME ::pos{...}` | Add or update a waypoint |
 | `add NAME` | Add a waypoint at your current position |
-| `rename NEWNAME` | Rename the selected WP or route |
+| `rename NEWNAME` | Rename the selected WP, route, or stop |
 | `setpos ::pos{...}` | Update coords of the selected WP or stop |
 | `del` | Delete the selected WP, route, or stop |
 | `newroute NAME` | Create a new route |
@@ -271,7 +270,50 @@ Type these in Lua chat while the PB is running:
 | `importarch` | Import all Arch HUD SavedLocations as personal WPs |
 | `importsaga` | Import all SAGA routes — single-stop as WPs, multi-stop as routes |
 | `navdbkeys` | Print all navdatabank key names to Lua chat (diagnostic) |
+| `theme ...` | Theme commands (`show`, `save`, `load`, `push`, `export`, `import`, etc.) — see [THEME_GUIDE.md](THEME_GUIDE.md) |
 | `help` | Show all commands in Lua chat |
+
+---
+
+## Using the Base / Org Admin Screen
+
+The base and org admin screens share the same tab layout:
+
+- **WAYPOINTS tab** — lists all waypoints. Click one to select.
+- **ROUTES tab** — lists all routes. Click one to open its stops view.
+- **PENDING tab** *(Org Admin only)* — shows waypoints submitted by members waiting for approval.
+
+### Action bar buttons
+
+The row of buttons at the bottom changes depending on the current view:
+
+**Waypoints view:**
+| Button | What it does |
+|--------|-------------|
+| ADD WP | Prompts in chat to type a name, saves your current position as a waypoint |
+| RENAME | Prompts in chat — renames the selected waypoint |
+| SET COORDS | Prompts in chat — paste `::pos{}` to update the selected waypoint's coordinates |
+| PRINT | Prints the selected waypoint and its `::pos{}` coords to Lua chat as a clickable nav marker |
+| DELETE | Deletes the selected waypoint |
+
+**Routes view:**
+| Button | What it does |
+|--------|-------------|
+| NEW ROUTE | Prompts in chat to type a name and creates an empty route |
+| RENAME | Prompts in chat — renames the selected route |
+| PRINT | Prints the selected route's stops to Lua chat |
+| DELETE | Deletes the selected route |
+
+**Stops view** *(after clicking a route)*:
+| Button | What it does |
+|--------|-------------|
+| ADD STOP | Prompts in chat to type a WP name or `::pos{}`, adds it to the end of the route |
+| RENAME | Prompts in chat — renames the selected stop |
+| SET COORDS | Prompts in chat — paste `::pos{}` to update the selected stop's coordinates |
+| PRINT | Prints the stop's coordinates to Lua chat as a clickable nav marker |
+| DEL STOP | Deletes the selected stop |
+
+Click the **ROUTES** tab while in the stops view to return to the route list.
 
 ---
 
@@ -292,15 +334,15 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | Alt + Up / Down | Move between sections (left panel) or items (right panel) |
 | Alt + Right | Enter the right panel / activate selected item |
 | Alt + Left | Go back to the left panel |
-| Alt + 0 | Open / close the Theme Editor (requires screen in slot 3) |
+| Alt + 0 | Open / close the Theme Editor (requires an optional Screen Unit linked) |
 | Left Shift | Toggle HUD on/off |
 
 ### Sections
 | Section | Contents |
 |---------|---------|
-| WP | Your personal waypoints. Select one and press Alt+Right to navigate. |
+| WP | Your personal waypoints. Each waypoint shows its `::pos{}` coords below it (dimmed). Select the waypoint name and press Alt+Right to navigate. |
 | ORG | Org waypoints and routes (after syncing). |
-| ROUTES | Your personal routes. |
+| ROUTES | Your personal routes. Each route lists its stops as sub-items with distance from current position. Select a stop name and press Alt+Right to navigate directly to that stop. |
 | SETTINGS | Mark WP, Next/Prev Stop, Clear Nav, Sync, Push actions. |
 | ATLAS | All game bodies. Select one and press Alt+Right to navigate to it. |
 | TIME CALC | Travel time to all your waypoints from current position. |
@@ -340,6 +382,7 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | `importarch` | Import all Arch HUD SavedLocations as personal WPs |
 | `importsaga` | Import all SAGA routes — single-stop as WPs, multi-stop as routes |
 | `navdbkeys` | Print all navdatabank key names to Lua chat (diagnostic) |
+| `theme ...` | Theme commands (`show`, `save`, `load`, `push`, `export`, `import`, etc.) — see [THEME_GUIDE.md](THEME_GUIDE.md) |
 | `help` | Show all commands in Lua chat |
 
 ---
@@ -358,7 +401,7 @@ The Navigator can send waypoints directly to Arch HUD as a temporary navigation 
    name so it does not overwrite an existing `userclass.lua` if you already
    have one — see the note in the file itself if you need to merge.
 
-2. In the game, link the **same databank** that your Arch HUD control seat uses to slot 4 of your Navigator PB.
+2. In the game, link the **same databank** that your Arch HUD control seat uses to any open slot on your Navigator PB (it's auto-detected — see Slot Connections above).
 
 3. That's it. When the Navigator PB starts it will print `[NAV] HUD bank=OK (Arch+Saga)` confirming the connection.
 
@@ -380,7 +423,7 @@ The Navigator can send waypoints directly to Saga HUD 4.22 as a temporary naviga
 
 1. In the release ZIP you will find `Saga_AP_4.22_Nav.json`. Import this into your Saga control seat instead of the standard Saga JSON.
 
-2. Link the **same databank** that your Navigator PB uses in slot 4 to your Saga control seat as well.
+2. Link the **same databank** that your Navigator PB detected as its `navdatabank` (check the startup console line) to your Saga control seat as well.
 
 3. That's it. When the Navigator PB starts it will print `[NAV] HUD bank=OK (Arch+Saga)` confirming the connection.
 
@@ -441,7 +484,7 @@ The same databank works for both HUDs — no link changes needed when switching.
 All PBs include a built-in color picker to customize the UI colors.
 
 - **Screen version:** Click the **THEME** button in the navigation panel.
-- **No screen version:** Press **Alt+0** (requires a Screen Unit in slot 3).
+- **No screen version:** Press **Alt+0** (requires an optional Screen Unit linked — any slot, auto-detected).
 - **Base and Org PBs:** Click the **THEME** button on the screen.
 
 The picker shows 8 color slots. Select a slot on the left, then drag the sliders to adjust hue, saturation, and brightness. The right panel shows a split preview — the left half shows the saved color, the right half shows your current change live. Click **SAVE** to apply. Click **RESET** to go back to the saved color. Themes are stored in the databank and survive PB restarts.
@@ -491,13 +534,13 @@ Backs up or restores a databank by copying all keys to another databank. Useful 
 
 Displays all keys and values stored in a linked databank on a screen. Useful for diagnosing what data a HUD is storing.
 
-**Setup:** Link a screen and the databank you want to inspect.
+**Setup:** Link a screen and the databank you want to inspect to any of the PB's slots, in any order — auto-detected at startup, same as the main PBs. Check the Lua console for a `[INSP] slot1=...` line confirming what was detected.
 
 **Commands:** Type a key name in Lua chat to filter. Type `clear` to reset. Type `next`/`prev` to page through results.
 
 ### Wipe_Databanks
 
-Clears all data from up to two linked databanks. Link databanks to slots named `databank1` and `databank2`. Activating the PB wipes them immediately — use with care.
+Clears all data from any number of linked databanks. Link one or more databanks to any of the PB's slots — auto-detected, no fixed slot names needed. Activating the PB wipes all of them immediately — use with care.
 
 ---
 
@@ -529,10 +572,11 @@ Clears all data from up to two linked databanks. Link databanks to slots named `
 
 **Screen clicks don't work**
 - Make sure you imported the correct `.txt` file into the PB (not copy-pasted into the screen).
-- The screen must be linked to slot 0.
+- Check the startup console line — the Screen Unit should show up as `screen`, not `unrecognized` or missing.
 
 **"No emitter" error**
-- The Emitter element isn't linked to the PB, or is linked to the wrong slot.
+- The Emitter element isn't linked to the PB.
+- Check the startup console line to confirm something was actually detected as `emitter`.
 
 **Waypoints show [0] on screen**
 - The databank may be empty — try typing `sync` first to pull from the base.
@@ -543,18 +587,22 @@ Clears all data from up to two linked databanks. Link databanks to slots named `
 - Or the waypoint uses planet-relative coords that the atlas can't resolve.
 
 **Theme Editor doesn't open on No Screen version**
-- A Screen Unit must be connected to slot 3 of the PB.
+- A Screen Unit must be linked (any slot — check the startup console line shows `screen` on one of them).
 - The screen must be activated — it will show "THEME EDITOR" when the PB is running and the picker is closed.
 
+**Script error on start, HUD loads but responds slowly (No Screen version)**
+- The startup console line will show `unrecognized` for a linked element that isn't a Screen Unit, Databank, Receiver, or Emitter — that's almost always the culprit, since the script only knows how to handle those four types.
+- If you have exactly the elements you expect linked and this still happens, check for a **second Databank auto-detection mismatch**: with two databanks linked and both still empty (fresh install), the script guesses which is primary by slot order — see "How the two databanks are told apart" in the Slot Connections section above. Swap which physical databank goes to your Arch/Saga seat if it guessed wrong.
+
 **Arch HUD does not respond to waypoints**
-- Check that `[NAV] HUD bank=OK (Arch+Saga)` prints when the Navigator PB starts. If it doesn't, slot 4 is not connected to a databank.
+- Check that `[NAV] HUD bank=OK (Arch+Saga)` prints when the Navigator PB starts. If it doesn't, no second databank was detected as `navdatabank` — check the startup console line.
 - Make sure the `userclass.lua` file is placed at exactly: `Game\data\lua\autoconf\custom\archhud\userclass.lua`
-- Make sure the databank in slot 4 is the same physical databank that your Arch HUD control seat is linked to.
+- Make sure the databank detected as `navdatabank` is the same physical databank that your Arch HUD control seat is linked to.
 
 **Saga HUD does not respond to waypoints**
 - Make sure you imported `Saga_AP_4.22_Nav.json` (the patched version), not the standard Saga JSON.
 - Check that `[NAV] HUD bank=OK (Arch+Saga)` prints when the Navigator PB starts.
-- Make sure the databank in slot 4 of the Navigator PB is also linked to your Saga control seat.
+- Make sure the databank detected as `navdatabank` (check the startup console line) is also linked to your Saga control seat.
 - If you wiped the databank, Navigator's waypoints are also cleared — add a waypoint first before testing.
 - You should see `[NAV] Target: NAME` in the Lua console from Saga when a target is received.
 

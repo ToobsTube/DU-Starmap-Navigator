@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR ORG BASE - SYNC PB v2.0.0
+-- NAVIGATOR ORG BASE - SYNC PB v2.2.0
 -- Dual Universe Navigation System
 --
 -- PURPOSE: Read-only sync server. Safe to give "use element" to all
@@ -7,11 +7,11 @@
 -- The screen shows the channel name and org name so any member can
 -- configure their ship without asking for help.
 --
--- SLOT CONNECTIONS (connect in this order):
---   Slot 0: screen     (Screen Unit)
---   Slot 1: databank   (SHARED databank — same one orgbase_admin uses)
---   Slot 2: receiver   (Receiver)
---   Slot 3: emitter    (Emitter)
+-- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
+--   Required: Screen Unit, Databank (SHARED databank — same one orgbase_admin uses),
+--   Receiver, Emitter
+-- Check the Lua console after activating for a "[ORG-SYNC] slot1=..." line
+-- confirming what was detected as what.
 --
 -- Channel and org name are read from databank (set by Admin PB).
 -- No --export fields — nothing for members to tamper with.
@@ -94,7 +94,81 @@ event=onStart()
 args=
 ]]
 
-local VERSION   = "v2.0.0"
+-- ── Slot auto-detect ────────────────────────────────────────────
+-- Link Screen, Databank, Receiver, Emitter to ANY of the PB's slots, in any
+-- order — same technique as the other Navigator PBs (see src/ship_noscreen.lua
+-- for the full write-up). Check the Lua console on startup ("[ORG-SYNC]
+-- slot1=...") to confirm what got detected.
+do
+  -- Primary check: DU's own type introspection. getElementClass() (confirmed
+  -- present on a "Modern Screen xs" via a live field dump, 2026-09-06)
+  -- logs a deprecation warning in-game telling scripts to use getClass()
+  -- instead — try that first, fall back to the deprecated name for older
+  -- game versions that might not have getClass() yet. Either way the
+  -- returned string gets a lowercase substring match, robust to exact
+  -- naming we haven't seen across other screen/receiver/emitter variants.
+  local function classOf(s)
+    local ok,cls=pcall(function() return s.getClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    ok,cls=pcall(function() return s.getElementClass() end)
+    if ok and type(cls)=="string" then return cls:lower() end
+    return nil
+  end
+  local function probe(s)
+    if not s then return nil end
+    local cls=classOf(s)
+    if cls then
+      if cls:find("screen")   then return "screen" end
+      if cls:find("databank") then return "databank" end
+      if cls:find("receiver") then return "receiver" end
+      if cls:find("emitter")  then return "emitter" end
+    end
+    -- Fallback for class names this doesn't recognize, or if
+    -- getElementClass() itself isn't available on some element. Previously
+    -- getRenderScript()/getScriptInput() were the primary screen check —
+    -- confirmed via that field dump that NEITHER getter actually exists on
+    -- a "Modern Screen xs" (only the setter halves do), which is why the
+    -- old capability-probe silently misclassified a real screen as
+    -- "unrecognized". getScriptOutput() (the real read counterpart DU
+    -- screens expose) is checked first here as the better fallback.
+    if pcall(function() return s.getScriptOutput() end)
+      or pcall(function() return s.getRenderScript() end)
+      or pcall(function() return s.getScriptInput() end) then return "screen" end
+    if pcall(function() return s.getChannelList() end) then return "receiver" end
+    if pcall(function() return s.getKeyList() end)      then return "databank" end
+    return "emitter"
+  end
+  -- Best-effort: read the element's in-game display name (works if you've
+  -- renamed it via right-click -> Rename). Wrapped in pcall so if this isn't
+  -- the right method on some element type, it just silently returns nil.
+  local function tryName(s)
+    local ok,n=pcall(function() return s.getName() end)
+    if ok and n and n~="" then return n end
+    return nil
+  end
+  -- Literal slotN references only — DU's sandbox does not support building
+  -- these names dynamically (e.g. _ENV["slot"..i]) and silently fails.
+  local raw={slot1,slot2,slot3,slot4,slot5,slot6,slot7,slot8,slot9,slot10}
+  for i,s in ipairs(raw) do
+    local kind=probe(s)
+    if kind=="databank" and not databank then databank=s
+    elseif kind=="receiver" and not receiver then receiver=s
+    elseif kind=="emitter"  and not emitter  then emitter=s
+    elseif kind=="screen"   and not screen   then screen=s
+    end
+  end
+  local dbg={}
+  for i,s in ipairs(raw) do
+    local role=(s==databank and "databank") or (s==receiver and "receiver")
+      or (s==emitter and "emitter") or (s==screen and "screen") or "unrecognized"
+    local nm=tryName(s)
+    local cls=(role=="unrecognized") and classOf(s) or nil
+    table.insert(dbg,"slot"..i.."="..role..(nm and ("("..nm..")") or "")..(cls and ("[class:"..cls.."]") or ""))
+  end
+  system.print("[ORG-SYNC] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
+end
+
+local VERSION   = "v2.2.0"
 OrgChannel      = "NavOrg"   -- fallback; overridden by databank
 OrgName         = "Org"      -- fallback; overridden by databank
 WaypointList    = {}
