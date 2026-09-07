@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "diagnostics": {
+    "globals": [
+      "system", "databank", "screen", "receiver", "emitter",
+      "construct", "unit", "player", "library", "json",
+      "slot1", "slot2", "slot3", "slot4", "slot5", "slot6", "slot7", "slot8", "slot9", "slot10",
+      "tag", "channel", "message", "action", "text"
+    ],
+    "disable": ["lowercase-global"]
+  }
+}
