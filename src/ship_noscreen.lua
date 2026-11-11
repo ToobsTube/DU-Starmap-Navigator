@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR SHIP - NO SCREEN VERSION v2.2.0
+-- NAVIGATOR SHIP - NO SCREEN VERSION v2.3.0
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -99,6 +99,21 @@ function CalcDist(p1,p2)
   local dx,dy,dz=p1.x-p2.x,p1.y-p2.y,p1.z-p2.z
   return math.sqrt(dx*dx+dy*dy+dz*dz)
 end
+-- Chat words that belong to Helmsman (seat flight script). Every running script
+-- gets every Lua chat line, so these are ignored instead of reported as unknown.
+-- Keep in sync with Helmsman's OnInputText (DU Flight script: src/flight.lua).
+HELM_WORDS={["help"]=true,["?"]=true,ap=true,go=true,stop=true,clear=true,hud=true,hudtheme=true,
+  settings=true,links=true,target=true,speed=true,stopdist=true,brakes=true,engines=true,tags=true,
+  fuel=true,fuelinfo=true,fueltalents=true,landsafety=true,park=true,fhud=true,autolevel=true,
+  farside=true,ahead=true,navinfo=true,["goto"]=true,["/goto"]=true,radar=true,mode=true,
+  flight=true,maneuver=true,thrust=true,chat=true}
+
+-- Clear the DU map destination. setWaypoint("") makes DU print "Invalid destination:",
+-- so use clearWaypoint when the API has it, otherwise leave the marker alone.
+function ClearMapWaypoint()
+  if system.clearWaypoint then pcall(system.clearWaypoint,false) end
+end
+
 function Trim(s) return (s or ""):match("^%s*(.-)%s*$") end
 
 -- ── Theme utilities ─────────────────────────────────────────
@@ -771,7 +786,7 @@ do
   system.print("[NAV] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION="v2.2.0"
+local VERSION="v2.3.0"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 CalcSpeed   =0        --export: Time Calc max speed in space in km/h. 0 = auto-detect your ship's actual max speed. Set a value to plan at a slower cruise speed instead (e.g. to save fuel).
@@ -931,10 +946,30 @@ function AddStop(routeName,arg)
         if not found then SetStatus("Not a WP name or ::pos{}") return end
       end
       table.insert(r.pts,{c=c,label=lbl})
-      SaveData(); SetStatus("Stop added ("..#r.pts.." total)"); return
+      SaveData(); SetStatus("Stop "..#r.pts.." added to "..r.n); return #r.pts
     end
   end
   SetStatus("Route not found: "..routeName)
+end
+
+-- Add several stops in order: "WP1; WP2; ::pos{...}"  (';' separates stops)
+function AddStops(routeName,list)
+  local parts={}
+  for part in (list..";"):gmatch("([^;]*);") do
+    part=Trim(part); if part~="" then table.insert(parts,part) end
+  end
+  if #parts==0 then SetStatus("Nothing to add — give a WP name or ::pos{}") return end
+  if #parts==1 then return AddStop(routeName,parts[1]) end
+  local added,bad,total=0,{},0
+  for _,part in ipairs(parts) do
+    local n=AddStop(routeName,part)
+    if n then added=added+1; total=n
+    elseif StatusMsg:find("Route not found",1,true) then return
+    else table.insert(bad,part) end
+  end
+  local msg="Added "..added.." stops to "..routeName..(added>0 and " ("..total.." total)" or "")
+  if #bad>0 then msg=msg.."  —  not found: "..table.concat(bad,", ") end
+  SetStatus(msg,8)
 end
 
 function DelStop(routeName,idx)
@@ -957,23 +992,31 @@ function GetCurrentPosStr()
   local p=GetCurrentPos(); if not p then return nil end
   return string.format("::pos{0,0,%.4f,%.4f,%.4f}",p.x,p.y,p.z)
 end
+-- Put the nav target on the DU map. Called when the target is chosen or changes.
 function UpdateWaypoint()
   if NavTarget and NavTarget.c and NavTarget.c~="" then
-    system.setWaypoint(NavTarget.c)
+    system.setWaypoint(NavTarget.c); LastMapWP=NavTarget.c
   end
 end
+-- Timer version: only pushes when the target changed (e.g. Auto Fly advanced a stop).
+-- Re-sending every tick overrode any destination the player set on the map themselves.
+function SyncMapWaypoint()
+  if NavTarget and NavTarget.c and NavTarget.c~="" and NavTarget.c~=LastMapWP then UpdateWaypoint() end
+end
 function ClearWaypoint()
-  NavTarget=nil; system.setWaypoint(""); SaveData()
+  NavTarget=nil; LastMapWP=nil; ClearMapWaypoint(); SaveData()
 end
 
 function SendAutopilot(name, coords)
   if not coords or coords=="" then return end
   -- HUD databank integration: write to shared databank (slot 4, optional)
-  -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest
+  -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest;
+  -- Helmsman (flight script) reads nav_ap_dest (and clears it after reading)
   if navdatabank then
     local dest = (name or "Navigator").."|"..coords
     navdatabank.setStringValue("nav_arch_dest", dest)
     navdatabank.setStringValue("nav_saga_dest", dest)
+    navdatabank.setStringValue("nav_ap_dest", dest)
     navdatabank.setStringValue("autofly", AutoFly and "1" or "0")
     system.print("[NAV] sent to HUD bank: "..(name or "Navigator"))
   end
@@ -1703,7 +1746,7 @@ if AutoFly and NavTarget and NavTarget.t=="route" then
   end
 end
 if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg="" end
-UpdateWaypoint()
+SyncMapWaypoint()
 DrawHUD()
 
 
@@ -2013,14 +2056,17 @@ args=*
 ]]
 local t=Trim(text); local lo=t:lower()
 
-if lo=="help" then
+if lo=="nhelp" or lo=="navhelp" then
   system.print("═══════════════════════════════")
-  system.print("  NAVIGATOR v2.1  (No Screen)")
+  system.print("  NAVIGATOR v2.3  (No Screen)")
   system.print("═══════════════════════════════")
   system.print("add NAME [::pos{..}]   save WP")
   system.print("del NAME               delete WP")
   system.print("newroute NAME          create route")
-  system.print("addstop ROUTE WP/pos   add stop")
+  system.print("addstop ROUTE > WAYPOINT NAME    add a saved waypoint as the last stop")
+  system.print("addstop ROUTE > ::pos{..}        add coordinates as the last stop")
+  system.print("addstop ROUTE > NAME; NAME; ...  add several stops, in that order")
+  system.print("addstop ROUTE > here             add your current nav target as the last stop")
   system.print("delstop ROUTE N        remove stop N")
   system.print("delroute NAME          delete route")
   system.print("nav NAME               navigate to WP or route")
@@ -2052,6 +2098,10 @@ if lo=="help" then
   system.print("theme import T:..  import from string")
   system.print("theme push         send theme to base (no copy/paste — pulled on next sync)")
   system.print("theme reset        restore defaults")
+  system.print("── Build a route ─────────────────")
+  system.print("1. newroute Ore Run")
+  system.print("2. addstop Ore Run > Home; Mine; ::pos{0,2,1.5,20.1,90}")
+  system.print("3. nav Ore Run   (stops fly in the order added; next = advance)")
   system.print("Alt+Up/Down = browse  |  Alt+Right = activate"..
     (screen and "  |  Alt+0 = theme picker" or ""))
   return
@@ -2085,6 +2135,15 @@ if delN and delN:lower()~="route" then DelWP(Trim(delN)); return end
 local nrN=t:match("^[Nn][Ee][Ww][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
 if nrN then AddRoute(Trim(nrN)); return end
 
+-- addstop ROUTE > WP1; WP2; ::pos{..}   ('>' lets route names contain spaces)
+local gRT,gList=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s*>%s*(.+)$")
+if gRT then
+  if Trim(gList):lower()=="here" then
+    if NavTarget and NavTarget.c then gList=NavTarget.c
+    else SetStatus("No nav target — nav to a WP first, then: addstop ROUTE > here"); return end
+  end
+  AddStops(Trim(gRT),gList); return
+end
 local asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s+(::pos%b{})")
 if not asRT then asRT,asArg=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s+([^%s].+)$") end
 if not asRT then asRT=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.-)%s*$") end
@@ -2095,7 +2154,7 @@ if asRT then
     if NavTarget and NavTarget.c then arg=NavTarget.c
     else SetStatus("No nav target — nav to a WP first, then: addstop ROUTE here"); return end
   end
-  AddStop(Trim(asRT),arg); return
+  AddStops(Trim(asRT),arg); return
 end
 
 local dsRT,dsN=t:match("^[Dd][Ee][Ll][Ss][Tt][Oo][Pp]%s+(.-)%s+(%d+)%s*$")
@@ -2457,4 +2516,5 @@ if lo:sub(1,5)=="theme" then
   SetStatus("Unknown theme command. Type: theme"); DrawHUD(); return
 end
 
-SetStatus("Unknown: '"..lo.."'  type help")
+if HELM_WORDS[lo:match("^(%S+)") or ""] then return end  -- Helmsman's command
+SetStatus("Unknown: '"..lo.."'  type nhelp")

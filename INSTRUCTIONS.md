@@ -1,4 +1,4 @@
-# DU Starmap Navigator v2.2 — Setup & User Guide
+# DU Starmap Navigator v2.3 — Setup & User Guide
 
 ## Overview
 
@@ -194,7 +194,7 @@ That one entry covers every ship you fly, now and in the future.
 2. Type `firstsync CHANNEL` in Lua chat — use the channel shown on the org's Sync PB screen.
    - Example: `firstsync NavAlliance`
 3. The ship syncs with that org and creates a new tab for it automatically. The org channel is saved — you never need to type it again.
-4. After that, use the **ORG SYNC** button or type `orgsync` to refresh org waypoints.
+4. After that, select the org's tab and use **SETTINGS → SYNC FROM ORG**, or type `orgsync`, to refresh org waypoints.
 
 For a second org, just repeat: type `firstsync CHANNEL` with the second org's channel. Each org gets its own tab.
 
@@ -205,36 +205,49 @@ For a second org, just repeat: type `firstsync CHANNEL` with the second org's ch
 The screen has three panels:
 
 - **Left — Waypoints:** Click a waypoint to select it.
-- **Middle — Routes/Stops:** Click a route to open its stops. Click the `◄ RouteName STOPS` header to go back to the route list.
-- **Right — Navigation + Buttons:** Shows your current nav target, distance, travel time, and action buttons.
+- **Middle — Routes/Stops:** Click a route to open its stops. The route's name shows on the row under the title bar; click the **ROUTES** title bar to go back to the route list.
+- **Right — Navigation + Buttons:** Shows your current nav target, distance, travel time, and action buttons. Click **SETTINGS** in the footer to swap this panel for the settings panel.
+
+Long lists show a scrollbar on the right edge: click the arrows to step one row at a time, or press and drag on the bar to jump.
 
 ### Tabs
 - **Personal** — your private waypoints
 - **[Org name]** — org waypoints (appear after first org sync)
-- **ATLAS** — all bodies in the game. Click one to navigate to it.
+- **ATLAS** — all bodies in the game. The list uses both the left and middle panels (two columns). Click a body, then **NAVIGATE TO BODY**.
 
-### Buttons
+### Navigation panel buttons
 | Button | What it does |
 |--------|-------------|
-| MARK WP (HERE) | Saves your current ship position as a new waypoint with an auto-generated name |
-| MARK ROUTE STOP | Adds your current position as the next stop on the selected route |
-| PRINT COORDS | Prints the selected waypoint's coordinates to Lua chat as a clickable nav marker |
+| MARK WP | Saves your current ship position as a new waypoint with an auto-generated name |
+| MARK STOP | Adds your current position as the last stop on the selected route |
 | NEW ROUTE | Prompts you in chat to type a name, then creates an empty route |
-| ADD STOP | Prompts you in chat to type a WP name or `::pos{}`, then adds it to the selected route |
+| ADD STOP | Starts adding stops to the selected route: click waypoints in the left panel to add them in order (or type a WP name / `::pos{}` in chat). The button changes to **DONE ADDING** — click it when finished |
 | RENAME | Prompts you in chat to type a new name for the selected WP, route, or stop |
 | SET COORDS | Prompts you in chat to paste `::pos{}` coords for the selected WP or stop |
-| NAVIGATE WP | Sets the selected waypoint as your nav target |
-| NAVIGATE ROUTE | Starts the selected route from stop 1 |
+| NAV WP | Sets the selected waypoint as your nav target |
+| NAV ROUTE | Starts the selected route from stop 1 |
+| NAVIGATE TO BODY | *(ATLAS tab)* Sets the selected planet/moon as your nav target |
 | NEXT STOP | Advance to the next route stop |
-| AUTO FLY | Toggle automatic route flying — Navigator advances stops and engages autopilot automatically |
+| AUTO FLY | Toggle automatic route flying — Navigator advances stops and engages autopilot automatically. Shows ON / OFF |
 | CLEAR NAV | Removes your current nav target |
-| SYNC BASE | Pulls waypoints/routes from your personal base |
+| PRINT COORDS | Prints the selected waypoint's coordinates to Lua chat as a clickable nav marker |
+| LK *(in waypoint list)* | Toggle waypoint lock — locked WPs show an LK badge and are excluded from push/sync |
+
+### Settings panel
+Click **SETTINGS** in the footer. The panel shows the version, ship ID, base channel, and the channel of the org tab you're on. Click **BACK** (or **CLOSE** in the footer) to return.
+
+| Button | What it does |
+|--------|-------------|
+| SYNC FROM BASE | Pulls waypoints/routes from your personal base |
 | PUSH TO BASE | Sends your waypoints/routes to your personal base |
-| ORG SYNC | Pulls waypoints from the org on the currently active tab |
-| ORG PUSH | Sends waypoints to the org on the currently active tab |
+| SYNC FROM ORG | Pulls waypoints from the org on the active tab *(org tab only)* |
+| PUSH TO ORG | Sends waypoints to the org on the active tab *(org tab only)* |
 | FIRST ORG SYNC | Shows a hint — type `firstsync CHANNEL` in Lua chat to add a new org |
 | THEME | Opens the Theme Editor color picker |
-| LK *(in waypoint list)* | Toggle waypoint lock — locked WPs show an LK badge and are excluded from push/sync |
+| BACK | Returns to the navigation panel |
+
+### Map marker
+When you navigate to a waypoint, route stop, or body, Navigator sets it as your DU map destination once. After that it leaves the map alone, so you can set your own destination at any time without clearing nav. Click NAV / NEXT STOP again to put Navigator's target back on the map.
 
 ### Guided Chat Buttons
 
@@ -257,8 +270,9 @@ Type these in Lua chat while the PB is running. Most editing actions can also be
 | `setpos ::pos{...}` | Update coords of the selected WP or stop |
 | `del` | Delete the selected WP, route, or stop |
 | `newroute NAME` | Create a new route |
-| `addstop WPNAME` | Add a saved WP as the next stop on the selected route |
-| `addstop ::pos{...}` | Add a position as the next stop on the selected route |
+| `addstop WAYPOINT NAME` | Add a saved waypoint as the last stop on the selected route |
+| `addstop ::pos{...}` | Add coordinates as the last stop on the selected route |
+| `addstop NAME; NAME; ...` | Add several stops at once, in that order (e.g. `addstop Home; Mine; ::pos{...}`) |
 | `delstop N` | Remove stop number N from the selected route |
 | `lock WPNAME` | Lock a waypoint — prevents it being pushed to base or overwritten by sync |
 | `unlock WPNAME` | Remove the lock from a waypoint |
@@ -271,7 +285,9 @@ Type these in Lua chat while the PB is running. Most editing actions can also be
 | `importsaga` | Import all SAGA routes — single-stop as WPs, multi-stop as routes |
 | `navdbkeys` | Print all navdatabank key names to Lua chat (diagnostic) |
 | `theme ...` | Theme commands (`show`, `save`, `load`, `push`, `export`, `import`, etc.) — see [THEME_GUIDE.md](THEME_GUIDE.md) |
-| `help` | Show all commands in Lua chat |
+| `nhelp` | Show all commands in Lua chat (`navhelp` also works) |
+
+> **Why `nhelp`?** Every running script receives every Lua chat line. Flight scripts use `help` too, so Navigator's ship PBs answer `nhelp` instead and leave `help` to your flight script. Navigator also stays quiet about common flight-script commands (`ap`, `goto`, `hud`, `stop`…) instead of replying "Unknown". Base PBs still use `help`.
 
 ---
 
@@ -354,9 +370,10 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | `add NAME ::pos{...}` | Add or update a waypoint with specific coords |
 | `del NAME` | Delete a waypoint by name |
 | `newroute NAME` | Create a new route |
-| `addstop ROUTE WP` | Add a saved WP as the next stop on a route |
-| `addstop ROUTE here` | Add your current nav target as the next stop |
-| `addstop ROUTE ::pos{...}` | Add a position as the next stop on a route |
+| `addstop ROUTE > WAYPOINT NAME` | Add a saved waypoint as the last stop on a route |
+| `addstop ROUTE > ::pos{...}` | Add coordinates as the last stop on a route |
+| `addstop ROUTE > NAME; NAME; ...` | Add several stops at once, in that order |
+| `addstop ROUTE > here` | Add your current nav target as the last stop |
 | `delstop ROUTE N` | Remove stop number N from a route |
 | `delroute NAME` | Delete a route |
 | `nav NAME` | Navigate to a waypoint or route by name |
@@ -383,7 +400,9 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | `importsaga` | Import all SAGA routes — single-stop as WPs, multi-stop as routes |
 | `navdbkeys` | Print all navdatabank key names to Lua chat (diagnostic) |
 | `theme ...` | Theme commands (`show`, `save`, `load`, `push`, `export`, `import`, etc.) — see [THEME_GUIDE.md](THEME_GUIDE.md) |
-| `help` | Show all commands in Lua chat |
+| `nhelp` | Show all commands in Lua chat (`navhelp` also works) |
+
+The `>` separates the route name from the stops, so route names with spaces work (`addstop Ore Run > Home; Mine`). The older `addstop ROUTE WP` form still works for one-word route names.
 
 ---
 

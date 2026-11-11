@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR PERSONAL BASE v2.2.0
+-- NAVIGATOR PERSONAL BASE v2.3.0
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -985,7 +985,7 @@ do
   system.print("[BASE] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION="v2.2.0"
+local VERSION="v2.3.0"
 BaseChannel = "NavBase" --export: Channel ships use to reach this base
 
 WaypointList = {}
@@ -1405,7 +1405,8 @@ args="screen_poll"
 ]]
 if not screen then return end
 local raw=screen.getScriptOutput()
-if not raw or raw=="" or raw==LastScreenOut then return end
+if not raw or raw=="" then LastScreenOut="" return end  -- no click: allow same button again
+if raw==LastScreenOut then return end
 LastScreenOut=raw
 local ok,d=pcall(json.decode,raw)
 if not ok or type(d)~="table" then return end
@@ -1822,7 +1823,7 @@ end
 
 if lo=="help" then
   system.print("══════════════════════════════════")
-  system.print("  NAV BASE v2.2  CHAT COMMANDS")
+  system.print("  NAV BASE v2.3  CHAT COMMANDS")
   system.print("══════════════════════════════════")
   system.print("add NAME ::pos{..}  add/update WP on active tab")
   system.print("del                 delete selected item")

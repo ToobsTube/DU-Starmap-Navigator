@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR ORG BASE - SYNC PB v2.2.0
+-- NAVIGATOR ORG BASE - SYNC PB v2.3.0
 -- Dual Universe Navigation System
 --
 -- PURPOSE: Read-only sync server. Safe to give "use element" to all
@@ -168,7 +168,7 @@ do
   system.print("[ORG-SYNC] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION   = "v2.2.0"
+local VERSION   = "v2.3.0"
 OrgChannel      = "NavOrg"   -- fallback; overridden by databank
 OrgName         = "Org"      -- fallback; overridden by databank
 WaypointList    = {}

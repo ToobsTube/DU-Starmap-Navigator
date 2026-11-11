@@ -1,13 +1,26 @@
-# DU Starmap Navigator v2.2
+# DU Starmap Navigator v2.3
 
 A waypoint and route navigation system for **Dual Universe** built on Programming Boards. Save locations, build multi-stop routes, share waypoints with your org, and calculate realistic travel times — all from a screen UI or an AR HUD.
+
+---
+
+## What's new in v2.3
+
+- **Settings panel (screen version)** — SYNC / PUSH / FIRST ORG SYNC / THEME moved off the main screen to a SETTINGS panel (footer button). The navigation panel uses a compact two-column button layout that no longer overlaps the target info.
+- **Click to add route stops** — click ADD STOP, then click waypoints in the order you want them. Chat also takes several stops at once: `addstop Home; Mine; ::pos{...}` (screen) or `addstop ROUTE > Home; Mine` (no screen).
+- **`nhelp` instead of `help`** on ship PBs, so Navigator doesn't answer your flight script's `help`. Common flight-script commands no longer produce "Unknown command" messages.
+- **Map destination is yours again** — Navigator sets the DU map destination when you navigate and then leaves it alone, instead of re-setting it every second.
+- **Scrollbars** with step arrows and drag-to-scroll on every list; the ATLAS tab shows two columns of bodies.
+- **Fixes** — clicking the same button twice in a row (ADD STOP, NEXT STOP, MARK WP…) now works every time; no more "Invalid destination:" when nav is cleared or the PB stops; correct version shown on screen; plus a `nav_ap_dest` databank key for flight scripts that read it.
+
+Upgrading from v2.2: re-import the PBs you use. Saved waypoints, routes, and themes are kept, and v2.3 ships still sync with v2.2 bases.
 
 ---
 
 ## Features
 
 - **Waypoints & Routes** — Save any position as a waypoint. Group them into multi-stop routes and step through them one at a time.
-- **Screen UI** — Clickable three-panel interface: waypoint list, route list, and navigation panel with distance and travel time.
+- **Screen UI** — Clickable three-panel interface: waypoint list, route list, and navigation panel with distance and travel time. Sync, push, and theme live on a separate settings panel to keep the main screen clean. Build routes by clicking waypoints; scroll long lists with arrows or by dragging.
 - **AR HUD (No Screen)** — Full keyboard-driven overlay that works without a screen unit. Shows navigation, waypoints, routes, and a travel time calculator.
 - **Personal Base Sync** — Push and pull waypoints between your ship and your base over emitter/receiver.
 - **Org Sharing** — Org bases serve waypoints to any ship that syncs. Ships add org connections once with `firstsync` and refresh any time after that.
@@ -27,11 +40,11 @@ A waypoint and route navigation system for **Dual Universe** built on Programmin
 
 | File | Purpose |
 |------|---------|
-| Navigator_Ship_Screen_v2.2.txt | Ship PB — clickable screen UI |
-| Navigator_Ship_NoScreen_v2.2.txt | Ship PB — AR HUD, no screen required |
-| Navigator_Base_v2.2.txt | Personal base PB |
-| Navigator_OrgBase_Admin_v2.2.txt | Org base — admin and editing |
-| Navigator_OrgBase_Sync_v2.2.txt | Org base — serves waypoints to ships |
+| Navigator_Ship_Screen_v2.3.txt | Ship PB — clickable screen UI |
+| Navigator_Ship_NoScreen_v2.3.txt | Ship PB — AR HUD, no screen required |
+| Navigator_Base_v2.3.txt | Personal base PB |
+| Navigator_OrgBase_Admin_v2.3.txt | Org base — admin and editing |
+| Navigator_OrgBase_Sync_v2.3.txt | Org base — serves waypoints to ships |
 
 All files are in the `dist/` folder. Tools (backup/restore, databank inspector) are in `dist/tools/`.
 
@@ -41,7 +54,7 @@ All files are in the `dist/` folder. Tools (backup/restore, databank inspector) 
 
 ### Personal use (ship + base)
 
-1. Import `Navigator_Base_v2.2.txt` into a PB at your base. Slots are **auto-detected** — link a Screen Unit, Databank, Receiver, and Emitter to any of the PB's slots, in any order.
+1. Import `Navigator_Base_v2.3.txt` into a PB at your base. Slots are **auto-detected** — link a Screen Unit, Databank, Receiver, and Emitter to any of the PB's slots, in any order.
 
 2. Import your chosen ship PB. Slots are **auto-detected** here too — link the required elements to any of the PB's slots, in any order:
 

@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR SHIP - SCREEN VERSION v2.2.0
+-- NAVIGATOR SHIP - SCREEN VERSION v2.3.0
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -101,6 +101,21 @@ function CalcDist(p1,p2)
   local dx,dy,dz=p1.x-p2.x,p1.y-p2.y,p1.z-p2.z
   return math.sqrt(dx*dx+dy*dy+dz*dz)
 end
+-- Chat words that belong to Helmsman (seat flight script). Every running script
+-- gets every Lua chat line, so these are ignored instead of reported as unknown.
+-- Keep in sync with Helmsman's OnInputText (DU Flight script: src/flight.lua).
+HELM_WORDS={["help"]=true,["?"]=true,ap=true,go=true,stop=true,clear=true,hud=true,hudtheme=true,
+  settings=true,links=true,target=true,speed=true,stopdist=true,brakes=true,engines=true,tags=true,
+  fuel=true,fuelinfo=true,fueltalents=true,landsafety=true,park=true,fhud=true,autolevel=true,
+  farside=true,ahead=true,navinfo=true,["goto"]=true,["/goto"]=true,radar=true,mode=true,
+  flight=true,maneuver=true,thrust=true,chat=true}
+
+-- Clear the DU map destination. setWaypoint("") makes DU print "Invalid destination:",
+-- so use clearWaypoint when the API has it, otherwise leave the marker alone.
+function ClearMapWaypoint()
+  if system.clearWaypoint then pcall(system.clearWaypoint,false) end
+end
+
 function Trim(s) return (s or ""):match("^%s*(.-)%s*$") end
 function OrgKey(n) return "org_"..n:gsub("[^%w]","_") end
 function AutoName(prefix,list)
@@ -513,7 +528,7 @@ do
   if not screen then system.print("[NAV] WARNING: no Screen Unit detected — this is the screen version, link one") end
 end
 
-local VERSION="v2.2.0"
+local VERSION="v2.3.0"
 Atlas        =nil
 CustomAtlas ="atlas"   --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
@@ -558,6 +573,8 @@ PendingTarget   = ""   -- context for pending action
 -- Theme state
 ShowThemePicker = false
 ShowFirstSync   = false
+ShowSettings    = false
+PickStops       = false   -- ADD STOP pick mode: clicking a WP appends it to SelRoute
 ThemeSlots      = nil   -- loaded on init
 Palette         = nil   -- derived from ThemeSlots
 PickerElem      = 1     -- 1-8, which slot is being edited
@@ -719,10 +736,32 @@ function AddStop(routeName,arg,tab)
       local c,lbl=ResolveStopCoords(arg,wps)
       if not c then SetStatus("Not a WP name or ::pos{}") return end
       table.insert(r.pts,{c=c,label=lbl})
-      SaveData(); SetStatus("Stop added to "..r.n.." ("..#r.pts.." stops)"); return
+      if SelRoute:lower()==r.n:lower() then SelStop=#r.pts end  -- show the new stop
+      SaveData(); SetStatus("Stop "..#r.pts.." added to "..r.n..(PickStops and "  —  click more, or DONE ADDING" or "  —  ADD STOP again for the next one"),8)
+      return #r.pts
     end
   end
   SetStatus("Route not found: "..routeName)
+end
+
+-- Add several stops in order: "WP1; WP2; ::pos{...}"  (';' separates stops)
+function AddStops(routeName,list,tab)
+  local parts={}
+  for part in (list..";"):gmatch("([^;]*);") do
+    part=Trim(part); if part~="" then table.insert(parts,part) end
+  end
+  if #parts==0 then SetStatus("Nothing to add — give a WP name or ::pos{}") return end
+  if #parts==1 then return AddStop(routeName,parts[1],tab) end
+  local added,bad,total=0,{},0
+  for _,part in ipairs(parts) do
+    local n=AddStop(routeName,part,tab)
+    if n then added=added+1; total=n
+    elseif StatusMsg:find("Route not found",1,true) then return
+    else table.insert(bad,part) end
+  end
+  local msg="Added "..added.." stops to "..routeName..(added>0 and " ("..total.." total)" or "")
+  if #bad>0 then msg=msg.."  —  not found: "..table.concat(bad,", ") end
+  SetStatus(msg,8)
 end
 
 function DelStop(routeName,idx,tab)
@@ -751,23 +790,31 @@ function GetCurrentPosStr()
   local p=GetCurrentPos(); if not p then return nil end
   return string.format("::pos{0,0,%.4f,%.4f,%.4f}",p.x,p.y,p.z)
 end
+-- Put the nav target on the DU map. Called when the target is chosen or changes.
 function UpdateWaypoint()
   if NavTarget and NavTarget.c and NavTarget.c~="" then
-    system.setWaypoint(NavTarget.c)
+    system.setWaypoint(NavTarget.c); LastMapWP=NavTarget.c
   end
 end
+-- Timer version: only pushes when the target changed (e.g. Auto Fly advanced a stop).
+-- Re-sending every tick overrode any destination the player set on the map themselves.
+function SyncMapWaypoint()
+  if NavTarget and NavTarget.c and NavTarget.c~="" and NavTarget.c~=LastMapWP then UpdateWaypoint() end
+end
 function ClearWaypoint()
-  NavTarget=nil; system.setWaypoint(""); SaveData()
+  NavTarget=nil; LastMapWP=nil; ClearMapWaypoint(); SaveData()
 end
 
 function SendAutopilot(name, coords)
   if not coords or coords=="" then return end
   -- HUD databank integration: write to shared databank (slot 4, optional)
-  -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest
+  -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest;
+  -- Helmsman (flight script) reads nav_ap_dest (and clears it after reading)
   if navdatabank then
     local dest = (name or "Navigator").."|"..coords
     navdatabank.setStringValue("nav_arch_dest", dest)
     navdatabank.setStringValue("nav_saga_dest", dest)
+    navdatabank.setStringValue("nav_ap_dest", dest)
     navdatabank.setStringValue("autofly", AutoFly and "1" or "0")
     system.print("[NAV] sent to HUD bank: "..(name or "Navigator"))
   end
@@ -1090,6 +1137,9 @@ local ATLASBODIES=%s
 local ORG_CHANNELS=%s
 local ShowFirstSync=%s
 local AutoFly=%s
+local ShowSettings=%s
+local PickStops=%s
+local VER=%q local BaseCh=%q local ShipId=%q
 ]],
     P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
     P.bgr,P.bgg,P.bgb,
@@ -1109,7 +1159,8 @@ local AutoFly=%s
     ScrollWP,ScrollRT,SelWP,SelRoute,SelStop,
     nName,nDist,nTime,nCoord,nType,nStop,nTotal,
     StatusMsg,ActiveTab,atlasTabIdx,AtlasSearch,wpLit,rtLit,ptLit,tnLit,atLit,
-    orgChLit,tostring(ShowFirstSync),tostring(AutoFly))
+    orgChLit,tostring(ShowFirstSync),tostring(AutoFly),
+    tostring(ShowSettings),tostring(PickStops and SelRoute~=""),VERSION,BaseChannel or "",ShipID or "")
 
   S[2]=[[
 local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
@@ -1118,6 +1169,7 @@ local Lh=createLayer() local Lx=createLayer()
 local cx,cy=getCursor() local pr=getCursorReleased() local Out=""
 local fT=loadFont("Montserrat-Light",18) local fS=loadFont("Montserrat-Light",13)
 local fH=loadFont("Montserrat-Light",20) local fB=loadFont("Montserrat-Light",22)
+local fM=loadFont("Montserrat-Light",15)
 setDefaultFillColor(Lt,Shape_Text,Txr,Txg,Txb,1)
 setDefaultFillColor(Lh,Shape_Text,Ar,Ag,Ab,1)
 setDefaultFillColor(Ls,Shape_Text,Nr,Ng,Nb,1)
@@ -1135,23 +1187,51 @@ local function PH(x,w,r,g,b) -- panel header bar
   addBox(Lp,x,CON_Y,w,C)
 end
 local function Row(x,w,i) return CON_Y+C+(i-1)*C end
-local function Btn(tx,x,y,w,h,en)
+local function Btn(tx,x,y,w,h,en,f)
+  f=f or fT
   local hv=(cx>=x and cx<x+w and cy>=y and cy<y+h)
   if not en then
     setNextFillColor(Lb,BDfr,BDfg,BDfb,0.7) setNextStrokeColor(Lb,BDsr,BDsg,BDsb,0.5)
     setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
     setNextFillColor(Lt,BDtr,BDtg,BDtb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
-    addText(Lt,fT,tx,x+w/2,y+h/2) return false
+    addText(Lt,f,tx,x+w/2,y+h/2) return false
   elseif hv then
     setNextFillColor(Lb,BHfr,BHfg,BHfb,1) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,1)
     setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,f,tx,x+w/2,y+h/2)
   else
     setNextFillColor(Lb,BNfr,BNfg,BNfb,0.9) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,1)
     setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,y,w,h,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,tx,x+w/2,y+h/2)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,f,tx,x+w/2,y+h/2)
   end
   return hv and pr
+end
+-- Scrollbar: arrows step through the list, press or drag on the track to jump.
+-- act = "scrollwp"/"scrollrt"; cur/maxS = current and max scroll offset.
+local cdn=getCursorDown()
+local function SBar(x,y,h,per,total,cur,maxS,act,step,tr,tg,tb,hr,hg,hb)
+  local w=12 local aH=18
+  local inBar=(cx>=x-6 and cx<x+w+6 and cy>=y and cy<y+h)
+  if inBar and pr then Out="" end   -- clicks on the bar never select the row underneath
+  local tY0=y+aH+2 local tHt=h-2*(aH+2)
+  local thH=math.max(18,tHt*(per/total)) local thY=tY0+(tHt-thH)*(cur/math.max(1,maxS))
+  for k=0,1 do
+    local ay=(k==0) and y or y+h-aH
+    local hv=(cx>=x-6 and cx<x+w+6 and cy>=ay and cy<ay+aH)
+    local en=(k==0 and cur>0) or (k==1 and cur<maxS)
+    setNextFillColor(Ll,tr,tg,tb,hv and en and 0.9 or 0.45) addBox(Ll,x,ay,w,aH)
+    setNextFillColor(Ll,hr,hg,hb,en and 1 or 0.3)
+    if k==0 then addTriangle(Ll,x+w/2,ay+5,x+2,ay+aH-5,x+w-2,ay+aH-5)
+    else addTriangle(Ll,x+2,ay+5,x+w-2,ay+5,x+w/2,ay+aH-5) end
+    if hv and pr and en then Out=json.encode({act,k==0 and -math.min(step,cur) or math.min(step,maxS-cur)}) end
+  end
+  setNextFillColor(Ll,tr,tg,tb,0.4) addBox(Ll,x,tY0,w,tHt)
+  setNextFillColor(Ll,hr,hg,hb,0.85) addBox(Ll,x,thY,w,thH)
+  if cdn and cx>=x-6 and cx<x+w+6 and cy>=tY0 and cy<tY0+tHt then
+    local f=(cy-tY0-thH/2)/math.max(1,tHt-thH)
+    local to=math.floor(math.max(0,math.min(1,f))*maxS+0.5)
+    if to~=cur then Out=json.encode({act.."_to",to}) end
+  end
 end
 ]]
 
@@ -1159,7 +1239,7 @@ end
 -- HEADER
 setNextFillColor(Lp,PHr,PHg,PHb,1) setNextStrokeColor(Lp,Lnr,Lng,Lnb,0.8)
 setNextStrokeWidth(Lp,1) addBox(Lp,0,0,SW,C)
-setNextTextAlign(Lx,AlignH_Left,AlignV_Middle) addText(Lx,fB,"◄ NAVIGATOR v2.1 ►",8,C/2)
+setNextTextAlign(Lx,AlignH_Left,AlignV_Middle) addText(Lx,fB,"◄ NAVIGATOR "..VER.." ►",8,C/2)
 if nName~="" then
   local lbl=(nType=="route" and "RT▶" or "WP▶")..nName..(nStop>0 and "  stop "..nStop.."/"..nTotal or "")
   setNextTextAlign(Lh,AlignH_Center,AlignV_Middle) addText(Lh,fH,lbl,SW/2,C/2)
@@ -1196,50 +1276,55 @@ for i,tn in ipairs(TABS) do
 end
 addLine(Ll,0,TAB_Y+TAB_H,SW,TAB_Y+TAB_H)
 -- panel dividers
-addLine(Ll,wpX+wpW,CON_Y,wpX+wpW,SH-32)
+addLine(Ll,wpX+wpW,ActiveTab==ATLAS_TAB and CON_Y+C or CON_Y,wpX+wpW,SH-32)
 addLine(Ll,rtX+rtW,CON_Y,rtX+rtW,SH-32)
 ]]
 
   S[5]=[[
 -- WAYPOINTS / ATLAS PANEL
 if ActiveTab==ATLAS_TAB then
-  -- ATLAS VIEW
-  PH(wpX,wpW,PHr,PHg,PHb)
+  -- ATLAS VIEW: spans the waypoint AND route panels as two columns (atlas has no routes)
+  local axW=wpW+rtW
+  PH(wpX,axW,PHr,PHg,PHb)
   setNextTextAlign(Ls,AlignH_Center,AlignV_Middle)
   local atlasHdr="ATLAS ["..#ATLASBODIES.."]"..(AtlasSearch~="" and "  /"..AtlasSearch or "")
-  addText(Ls,fH,atlasHdr,wpX+wpW/2,CON_Y+C/2)
-  addLine(Ll,wpX,CON_Y+C,wpX+wpW,CON_Y+C)
-  local maxSA=math.max(0,#ATLASBODIES-vis+1) local sCA=math.max(0,math.min(ScrollWP,maxSA))
-  for i=1,vis do
-    local idx=i+sCA if idx>#ATLASBODIES then break end
-    local b=ATLASBODIES[idx] local ry=Row(wpX,wpW,i)
-    local sel=(b.n==SelWP) local hv=(cx>=wpX and cx<wpX+wpW and cy>=ry and cy<ry+C)
+  addText(Ls,fH,atlasHdr,wpX+axW/2,CON_Y+C/2)
+  addLine(Ll,wpX,CON_Y+C,wpX+axW,CON_Y+C)
+  local per=vis*2
+  local maxSA=math.max(0,#ATLASBODIES-per) local sCA=math.max(0,math.min(ScrollWP,maxSA))
+  local cols={{x=wpX,w=wpW},{x=rtX,w=rtW-12}}
+  for k=0,per-1 do
+    local idx=k+1+sCA if idx>#ATLASBODIES then break end
+    local col=cols[math.floor(k/vis)+1] local i=(k%vis)+1
+    local x,w=col.x,col.w
+    local b=ATLASBODIES[idx] local ry=Row(x,w,i)
+    local sel=(b.n==SelWP) local hv=(cx>=x and cx<x+w and cy>=ry and cy<ry+C)
     if sel then
       setNextFillColor(Lp,SLr,SLg,SLb,0.28) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9)
-      setNextStrokeWidth(Lp,1) addBox(Lp,wpX,ry,wpW,C)
-    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,wpX,ry,wpW,C) end
+      setNextStrokeWidth(Lp,1) addBox(Lp,x,ry,w,C)
+    elseif hv then setNextFillColor(Lp,1,1,1,0.04) addBox(Lp,x,ry,w,C) end
     setNextFillColor(Lt,NMr,NMg,NMb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
-    addText(Lt,fS,idx..".",wpX+28,ry+C/2)
+    addText(Lt,fS,idx..".",x+34,ry+C/2)
     local L=(sel or hv) and Ls or Lt
     if sel then setNextFillColor(Ls,Nr,Ng,Nb,1) end
-    setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,b.n,wpX+32,ry+C/2)
-    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.20) addLine(Ll,wpX,ry+C,wpX+wpW,ry+C)
+    setNextTextAlign(L,AlignH_Left,AlignV_Middle) addText(L,fT,b.n,x+38,ry+C/2)
+    setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.20) addLine(Ll,x,ry+C,x+w,ry+C)
     if hv and pr then Out=json.encode({"selwp",b.n}) end
   end
-  if #ATLASBODIES>vis then
-    local sbX=wpX+wpW-10 local sbW=10 local sbY=CON_Y+C+2 local sbH=vis*C-4
-    local tH=math.max(18,sbH*(vis/#ATLASBODIES)) local tY=sbY+(sbH-tH)*(sCA/math.max(1,maxSA))
-    setNextFillColor(Ll,STr,STg,STb,0.4) addBox(Ll,sbX,sbY,sbW,sbH)
-    setNextFillColor(Ll,SHr,SHg,SHb,0.8) addBox(Ll,sbX,tY,sbW,tH)
-    if cx>=sbX and cx<sbX+sbW and cy>=sbY and cy<sbY+sbH and pr then
-      Out=json.encode({"scrollwp",cy<tY+tH/2 and -1 or 1})
-    end
+  if #ATLASBODIES>per then
+    SBar(rtX+rtW-12,CON_Y+C+2,vis*C-4,per,#ATLASBODIES,sCA,maxSA,"scrollwp",vis,STr,STg,STb,SHr,SHg,SHb)
   end
 else
   -- WAYPOINTS VIEW
   PH(wpX,wpW,PHr,PHg,PHb)
-  setNextTextAlign(Lx,AlignH_Center,AlignV_Middle)
-  addText(Lx,fH,"WAYPOINTS ["..#WP.."]",wpX+wpW/2,CON_Y+C/2)
+  if PickStops then
+    setNextFillColor(Lp,Ar*0.35,Ag*0.35,Ab*0.35,0.9) addBox(Lp,wpX,CON_Y,wpW,C)
+    setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
+    addText(Lh,fT,"CLICK WPs TO ADD AS STOPS",wpX+wpW/2,CON_Y+C/2)
+  else
+    setNextTextAlign(Lx,AlignH_Center,AlignV_Middle)
+    addText(Lx,fH,"WAYPOINTS ["..#WP.."]",wpX+wpW/2,CON_Y+C/2)
+  end
   addLine(Ll,wpX,CON_Y+C,wpX+wpW,CON_Y+C)
   local maxSW=math.max(0,#WP-vis+1) local sCW=math.max(0,math.min(ScrollWP,maxSW))
   for i=1,vis do
@@ -1262,38 +1347,45 @@ else
     end
     setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.20) addLine(Ll,wpX,ry+C,wpX+wpW,ry+C)
     if hv and pr then
-      if cx>=lkX and cx<lkX+lkW then
+      if PickStops then Out=json.encode({"pickstop",wp.n})
+      elseif cx>=lkX and cx<lkX+lkW then
         Out=json.encode({wp.lk and "unlock_wp" or "lock_wp", wp.n})
       else Out=json.encode({"selwp",wp.n}) end
     end
   end
   if #WP>vis then
-    local sbX=wpX+wpW-10 local sbW=10 local sbY=CON_Y+C+2 local sbH=vis*C-4
-    local tH=math.max(18,sbH*(vis/#WP)) local tY=sbY+(sbH-tH)*(sCW/math.max(1,maxSW))
-    setNextFillColor(Ll,STr,STg,STb,0.4) addBox(Ll,sbX,sbY,sbW,sbH)
-    setNextFillColor(Ll,SHr,SHg,SHb,0.8) addBox(Ll,sbX,tY,sbW,tH)
-    if cx>=sbX and cx<sbX+sbW and cy>=sbY and cy<sbY+sbH and pr then
-      Out=json.encode({"scrollwp",cy<tY+tH/2 and -1 or 1})
-    end
+    SBar(wpX+wpW-12,CON_Y+C+2,vis*C-4,vis,#WP,sCW,maxSW,"scrollwp",1,STr,STg,STb,SHr,SHg,SHb)
   end
 end
 ]]
 
   S[6]=[[
--- ROUTE / STOPS PANEL
-if SelStop>0 and SelRT~="" then
-  -- STOP LIST VIEW
-  PH(rtX,rtW,PHr,PHg,PHb)
+-- ROUTE / STOPS PANEL (hidden on the ATLAS tab: the atlas list uses this space)
+if ActiveTab==ATLAS_TAB then
+elseif SelStop>0 and SelRT~="" then
+  -- STOP LIST VIEW: title bar stays "ROUTES" (click to go back), route name on the row below
+  PH(rtX,rtW,Rtdr,Rtdg,Rtdb)
   local hdrHv=(cx>=rtX and cx<rtX+rtW and cy>=CON_Y and cy<CON_Y+C)
   if hdrHv then setNextFillColor(Lp,1,1,1,0.12) addBox(Lp,rtX,CON_Y,rtW,C) end
-  setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Left,AlignV_Middle)
-  addText(Lh,fH,"◄ "..SelRT.." STOPS",rtX+8,CON_Y+C/2)
+  setNextFillColor(Lh,Rtr,Rtg,Rtb,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
+  addText(Lh,fH,"ROUTES ["..#RT.."]",rtX+rtW/2,CON_Y+C/2)
+  setNextFillColor(Lh,Rtr,Rtg,Rtb,hdrHv and 1 or 0.7) setNextTextAlign(Lh,AlignH_Left,AlignV_Middle)
+  addText(Lh,fT,"<",rtX+10,CON_Y+C/2)
   addLine(Ll,rtX,CON_Y+C,rtX+rtW,CON_Y+C)
   if hdrHv and pr then Out=json.encode({"closestops"}) end
-  local maxSR=math.max(0,#STOPS-vis+1) local sCR=math.max(0,math.min(ScrollRT,maxSR))
-  for i=1,vis do
+  -- route name row
+  local nmY=CON_Y+C
+  setNextFillColor(Lp,Rtdr,Rtdg,Rtdb,0.22) addBox(Lp,rtX,nmY,rtW,C)
+  setNextFillColor(Ls,Rtlr,Rtlg,Rtlb,1) setNextTextAlign(Ls,AlignH_Left,AlignV_Middle)
+  addText(Ls,fT,SelRT,rtX+8,nmY+C/2)
+  setNextFillColor(Lt,Rtdr,Rtdg,Rtdb,1) setNextTextAlign(Lt,AlignH_Right,AlignV_Middle)
+  addText(Lt,fS,#STOPS.." stops",rtX+rtW-8,nmY+C/2)
+  addLine(Ll,rtX,nmY+C,rtX+rtW,nmY+C)
+  local svis=vis-1
+  local maxSR=math.max(0,#STOPS-svis+1) local sCR=math.max(0,math.min(ScrollRT,maxSR))
+  for i=1,svis do
     local idx=i+sCR if idx>#STOPS then break end
-    local st=STOPS[idx] local ry=Row(rtX,rtW,i)
+    local st=STOPS[idx] local ry=Row(rtX,rtW,i)+C
     local sel=(SelStop==idx) local hv=(cx>=rtX and cx<rtX+rtW and cy>=ry and cy<ry+C)
     if sel then
       setNextFillColor(Lp,SLr,SLg,SLb,0.28) setNextStrokeColor(Lp,Ar,Ag,Ab,0.9)
@@ -1308,14 +1400,8 @@ if SelStop>0 and SelRT~="" then
     setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.20) addLine(Ll,rtX,ry+C,rtX+rtW,ry+C)
     if hv and pr then Out=json.encode({"selstop",idx}) end
   end
-  if #STOPS>vis then
-    local sbX=rtX+rtW-10 local sbW=10 local sbY=CON_Y+C+2 local sbH=vis*C-4
-    local tH=math.max(18,sbH*(vis/#STOPS)) local tY=sbY+(sbH-tH)*(sCR/math.max(1,maxSR))
-    setNextFillColor(Ll,STr,STg,STb,0.4) addBox(Ll,sbX,sbY,sbW,sbH)
-    setNextFillColor(Ll,SHr,SHg,SHb,0.8) addBox(Ll,sbX,tY,sbW,tH)
-    if cx>=sbX and cx<sbX+sbW and cy>=sbY and cy<sbY+sbH and pr then
-      Out=json.encode({"scrollrt",cy<tY+tH/2 and -1 or 1})
-    end
+  if #STOPS>svis then
+    SBar(rtX+rtW-12,CON_Y+C*2+2,svis*C-4,svis,#STOPS,sCR,maxSR,"scrollrt",1,STr,STg,STb,SHr,SHg,SHb)
   end
 else
   -- ROUTE LIST VIEW
@@ -1342,18 +1428,43 @@ else
     if hv and pr then Out=json.encode({"selrt",r.n}) end
   end
   if #RT>vis then
-    local sbX=rtX+rtW-10 local sbW=10 local sbY=CON_Y+C+2 local sbH=vis*C-4
-    local tH=math.max(18,sbH*(vis/#RT)) local tY=sbY+(sbH-tH)*(sCR/math.max(1,maxSR))
-    setNextFillColor(Ll,Rtdr,Rtdg,Rtdb,0.4) addBox(Ll,sbX,sbY,sbW,sbH)
-    setNextFillColor(Ll,Rtlr,Rtlg,Rtlb,0.8) addBox(Ll,sbX,tY,sbW,tH)
-    if cx>=sbX and cx<sbX+sbW and cy>=sbY and cy<sbY+sbH and pr then
-      Out=json.encode({"scrollrt",cy<tY+tH/2 and -1 or 1})
-    end
+    SBar(rtX+rtW-12,CON_Y+C+2,vis*C-4,vis,#RT,sCR,maxSR,"scrollrt",1,Rtdr,Rtdg,Rtdb,Rtlr,Rtlg,Rtlb)
   end
 end
 ]]
 
   S[7]=[[
+if ShowSettings then
+-- SETTINGS PANEL (replaces the nav panel while open)
+PH(nvX,nvW,PHr,PHg,PHb)
+setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
+addText(Lh,fH,"SETTINGS",nvX+nvW/2,CON_Y+C/2)
+addLine(Ll,nvX,CON_Y+C,nvX+nvW,CON_Y+C)
+local isOrgTab=(ActiveTab>0 and ActiveTab~=ATLAS_TAB)
+local orgName=isOrgTab and TABS[ActiveTab+1] or ""
+local orgCh=""
+for _,o in ipairs(ORG_CHANNELS) do if o.n==orgName then orgCh=o.ch end end
+local sy=CON_Y+C+8
+local function SR(lbl,val)
+  setNextFillColor(Lt,LBr,LBg,LBb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+  addText(Lt,fS,lbl,nvX+6,sy)
+  setNextFillColor(Lt,Txr,Txg,Txb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+  addText(Lt,fT,val,nvX+6,sy+14) sy=sy+C+4
+end
+SR("VERSION",VER)
+SR("SHIP ID",ShipId~="" and ShipId or "---")
+SR("BASE CHANNEL",BaseCh~="" and BaseCh or "---")
+SR("ORG CHANNEL",isOrgTab and (orgCh~="" and orgCh or "not set - use First Org Sync") or "select an org tab")
+local bX=nvX+5 local bW=nvW-10 local bH=26 local bG=4
+local by=SH-32-(bH+bG)*7-4
+if Btn("SYNC FROM BASE",bX,by,bW,bH,true)     then Out=json.encode({"sync","base"}) end by=by+bH+bG
+if Btn("PUSH TO BASE",bX,by,bW,bH,true)       then Out=json.encode({"push","base"}) end by=by+bH+bG
+if Btn("SYNC FROM ORG",bX,by,bW,bH,isOrgTab)  then Out=json.encode({"sync","org"})  end by=by+bH+bG
+if Btn("PUSH TO ORG",bX,by,bW,bH,isOrgTab)    then Out=json.encode({"push","org"})  end by=by+bH+bG
+if Btn("FIRST ORG SYNC",bX,by,bW,bH,true)     then Out=json.encode({"firstsync_hint"}) end by=by+bH+bG
+if Btn("THEME",bX,by,bW,bH,true)              then Out=json.encode({"open_theme"}) end by=by+bH+bG
+if Btn("BACK",bX,by,bW,bH,true)               then Out=json.encode({"settings_close"}) end
+else
 -- NAV PANEL
 PH(nvX,nvW,PHr,PHg,PHb)
 setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
@@ -1383,58 +1494,50 @@ else
   setNextFillColor(Lt,DMr*0.7,DMg*0.7,DMb*0.7,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle)
   addText(Lt,fS,"Select WP or Route",nvX+nvW/2,CON_Y+C*4)
 end
--- Buttons
+-- Buttons: two columns of half-width buttons, anchored above the footer
 local bX=nvX+5 local bW=nvW-10 local bH=26 local bG=4
-local by=SH-32-(bH+bG)*14-32
+local hW=math.floor((bW-bG)/2) local bX2=bX+hW+bG
+local by=SH-32-(bH+bG)*6-4
 local hasSelItem=(SelWP~="" or SelRT~="")
 local hasCoordTarget=(SelWP~="" or (SelRT~="" and SelStop>0))
-if Btn("★ MARK WP (HERE)",       bX,by,bW,bH,true)          then Out=json.encode({"mark_wp"})           end by=by+bH+bG
-if Btn("★ MARK ROUTE STOP",      bX,by,bW,bH,SelRT~="")     then Out=json.encode({"mark_stop"})          end by=by+bH+bG
-if Btn("⎘ PRINT COORDS",         bX,by,bW,bH,SelWP~="")     then Out=json.encode({"print_coords",SelWP}) end by=by+bH+bG
-if Btn("NEW ROUTE",               bX,by,bW,bH,true)          then Out=json.encode({"newroute"})           end by=by+bH+bG
-if Btn("ADD STOP",                bX,by,bW,bH,SelRT~="")     then Out=json.encode({"addstop"})            end by=by+bH+bG
-if Btn("RENAME",                  bX,by,bW,bH,hasSelItem)    then Out=json.encode({"rename"})             end by=by+bH+bG
-if Btn("SET COORDS",              bX,by,bW,bH,hasCoordTarget) then Out=json.encode({"setcoords"})         end by=by+bH+bG
-if ActiveTab==ATLAS_TAB then
-  if Btn("▶ NAVIGATE TO BODY",   bX,by,bW,bH,SelWP~="")     then Out=json.encode({"nav_atlas",SelWP})    end by=by+bH+bG
-  by=by+bH+bG  -- skip route button slot
-else
-  if Btn("▶ NAVIGATE WP",        bX,by,bW,bH,SelWP~="")     then Out=json.encode({"nav_wp",SelWP})       end by=by+bH+bG
-  if Btn("▶ NAVIGATE ROUTE",     bX,by,bW,bH,SelRT~="")     then Out=json.encode({"nav_rt",SelRT})       end by=by+bH+bG
+local function Pair(l1,e1,a1,l2,e2,a2)
+  if l1 and Btn(l1,bX,by,hW,bH,e1,fM) then Out=json.encode(a1) end
+  if l2 and Btn(l2,bX2,by,hW,bH,e2,fM) then Out=json.encode(a2) end
+  by=by+bH+bG
 end
-if Btn("▶▶ NEXT STOP",           bX,by,bW,bH,nType=="route") then Out=json.encode({"next_stop"})         end by=by+bH+bG
-do local afLabel=AutoFly and "AUTO FLY ●" or "AUTO FLY ○"
-  local hv=(cx>=bX and cx<bX+bW and cy>=by and cy<by+bH)
+Pair("MARK WP",true,{"mark_wp"}, "MARK STOP",SelRT~="",{"mark_stop"})
+Pair("NEW ROUTE",true,{"newroute"}, PickStops and "DONE ADDING" or "ADD STOP",SelRT~="",{PickStops and "addstop_done" or "addstop"})
+Pair("RENAME",hasSelItem,{"rename"}, "SET COORDS",hasCoordTarget,{"setcoords"})
+if ActiveTab==ATLAS_TAB then
+  if Btn("NAVIGATE TO BODY",bX,by,bW,bH,SelWP~="",fM) then Out=json.encode({"nav_atlas",SelWP}) end by=by+bH+bG
+else
+  Pair("NAV WP",SelWP~="",{"nav_wp",SelWP}, "NAV ROUTE",SelRT~="",{"nav_rt",SelRT})
+end
+if Btn("NEXT STOP",bX,by,hW,bH,nType=="route",fM) then Out=json.encode({"next_stop"}) end
+do local afLabel=AutoFly and "AUTO FLY: ON" or "AUTO FLY: OFF"
+  local x=bX2 local hv=(cx>=x and cx<x+hW and cy>=by and cy<by+bH)
   if AutoFly then
     setNextFillColor(Lb,Ar*0.35,Ag*0.35,Ab*0.35,0.9) setNextStrokeColor(Lb,Ar,Ag,Ab,1)
-    setNextStrokeWidth(Lb,2) addBoxRounded(Lb,bX,by,bW,bH,4)
-    setNextTextAlign(Lh,AlignH_Center,AlignV_Middle) addText(Lh,fT,afLabel,bX+bW/2,by+bH/2)
+    setNextStrokeWidth(Lb,2) addBoxRounded(Lb,x,by,hW,bH,4)
+    setNextTextAlign(Lh,AlignH_Center,AlignV_Middle) addText(Lh,fM,afLabel,x+hW/2,by+bH/2)
   else
     setNextFillColor(Lb,hv and BHfr or BNfr,hv and BHfg or BNfg,hv and BHfb or BNfb,hv and 1 or 0.9)
     setNextStrokeColor(Lb,hv and BHsr or BNsr,hv and BHsg or BNsg,hv and BHsb or BNsb,1)
-    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,bX,by,bW,bH,4)
-    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,afLabel,bX+bW/2,by+bH/2)
+    setNextStrokeWidth(Lb,1) addBoxRounded(Lb,x,by,hW,bH,4)
+    setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fM,afLabel,x+hW/2,by+bH/2)
   end
   if hv and pr then Out=json.encode({AutoFly and "autofly_off" or "autofly_on"}) end
 end by=by+bH+bG
-if Btn("✕ CLEAR NAV",            bX,by,bW,bH,nName~="")     then Out=json.encode({"clear_nav"})          end by=by+bH+bG
-local isOrgTab=(ActiveTab>0 and ActiveTab~=ATLAS_TAB)
-if isOrgTab then
-  if Btn("⟳ SYNC ORG",           bX,by,bW,bH,true)          then Out=json.encode({"sync","org"})         end by=by+bH+bG
-  if Btn("⬆ PUSH TO ORG",        bX,by,bW,bH,true)          then Out=json.encode({"push","org"})         end by=by+bH+bG
-else
-  if Btn("⟳ SYNC BASE",          bX,by,bW,bH,true)          then Out=json.encode({"sync","base"})        end by=by+bH+bG
-  if Btn("⬆ PUSH TO BASE",       bX,by,bW,bH,true)          then Out=json.encode({"push","base"})        end by=by+bH+bG
-end
-if Btn("▶ FIRST ORG SYNC",bX,by,bW,bH,true) then Out=json.encode({"firstsync_hint"}) end
+Pair("CLEAR NAV",nName~="",{"clear_nav"}, "PRINT COORDS",SelWP~="",{"print_coords",SelWP})
+end -- ShowSettings
 ]]
 
   S[8]=[[
 -- FOOTER
 addLine(Ll,0,SH-32,SW,SH-32)
 setNextFillColor(Lp,FTr,FTg,FTb,0.95) addBox(Lp,0,SH-32,SW,32)
--- [THEME] button in footer
-local thX=SW-80 local thW=72 local thY=SH-28 local thH=22
+-- [SETTINGS] toggle in footer
+local thX=SW-92 local thW=84 local thY=SH-28 local thH=22
 local thHv=(cx>=thX and cx<thX+thW and cy>=thY and cy<thY+thH)
 if thHv then
   setNextFillColor(Lb,BHfr,BHfg,BHfb,0.8) setNextStrokeColor(Lb,BHsr,BHsg,BHsb,0.8)
@@ -1442,8 +1545,8 @@ else
   setNextFillColor(Lb,BNfr,BNfg,BNfb,0.6) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.6)
 end
 setNextStrokeWidth(Lb,1) addBoxRounded(Lb,thX,thY,thW,thH,3)
-setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,"THEME",thX+thW/2,thY+thH/2)
-if thHv and pr then Out=json.encode({"open_theme"}) end
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,ShowSettings and "CLOSE" or "SETTINGS",thX+thW/2,thY+thH/2)
+if thHv and pr then Out=json.encode({ShowSettings and "settings_close" or "settings_open"}) end
 -- Status / hint text
 if StatusMsg~="" then
   setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,StatusMsg,SW/2-40,SH-16)
@@ -1452,7 +1555,7 @@ else
   if SelWP~="" or SelRT~="" then
     addText(Lt,fS,"Selected: "..(SelWP~="" and "WP ["..SelWP.."]" or "Route ["..SelRT.."]").."  |  chat: rename / setpos / del / addstop / delstop N",SW/2-40,SH-16)
   else
-    addText(Lt,fS,"Click WP or Route to select  |  chat: help  |  Mark WP Here to save position",SW/2-40,SH-16)
+    addText(Lt,fS,"Click WP or Route to select  |  chat: nhelp  |  Mark WP Here to save position",SW/2-40,SH-16)
   end
 end
 setOutput(Out) requestAnimationFrame(2)
@@ -1815,7 +1918,7 @@ slot=-1
 event=onStop()
 args=
 ]]
-if NavTarget and NavTarget.c then system.setWaypoint("") end
+if NavTarget and NavTarget.c then ClearMapWaypoint() end
 if screen then
   local P=Palette
   screen.setRenderScript(string.format([[
@@ -1860,7 +1963,7 @@ if AutoFly and NavTarget and NavTarget.t=="route" and CurrentPos then
   end
 end
 if StatusMsg~="" and system.getArkTime()>StatusExpiry then StatusMsg="" end
-UpdateWaypoint()
+SyncMapWaypoint()
 DrawScreen()
 
 
@@ -1871,23 +1974,27 @@ args="screen_poll"
 ]]
 if not screen then return end
 local raw=screen.getScriptOutput()
-if not raw or raw=="" then return end
+-- Empty output = no click this frame: forget the last click so pressing the
+-- same button again (ADD STOP, NEXT STOP, MARK WP...) is not swallowed as a repeat.
+if not raw or raw=="" then LastScreenOut="" return end
 local ok,d=pcall(json.decode,raw)
 if not ok or type(d)~="table" then return end
 local act=d[1]
-local isScroll=(act=="scrollwp" or act=="scrollrt")
-if not isScroll then
-  if raw==LastScreenOut then return end
-  LastScreenOut=raw
-end
+-- Same output twice in a row = the same click read again before the screen redrew.
+-- (LastScreenOut resets on empty output, so a real second click still counts.)
+if raw==LastScreenOut then return end
+LastScreenOut=raw
 if     act=="scrollwp"  then ScrollWP=math.max(0,ScrollWP+(d[2] or 1))
 elseif act=="scrollrt"  then ScrollRT=math.max(0,ScrollRT+(d[2] or 1))
-elseif act=="tab"       then ActiveTab=d[2]; SelWP=""; SelRoute=""; SelStop=0; ScrollWP=0; ScrollRT=0
+elseif act=="scrollwp_to" then ScrollWP=math.max(0,math.floor(d[2] or 0))
+elseif act=="scrollrt_to" then ScrollRT=math.max(0,math.floor(d[2] or 0))
+elseif act=="tab"       then PickStops=false; ActiveTab=d[2]; SelWP=""; SelRoute=""; SelStop=0; ScrollWP=0; ScrollRT=0
 elseif act=="selwp"     then SelWP=(SelWP==d[2] and "" or d[2]); SelRoute=""; SelStop=0
 elseif act=="selrt"     then
+  PickStops=false
   if SelRoute==d[2] and SelStop==0 then SelRoute=""; SelWP=""  -- click selected route = deselect
   else SelRoute=d[2]; SelStop=1; SelWP="" end    -- click route = open stops immediately
-elseif act=="closestops" then SelStop=0          -- back button: return to route list, keep selection
+elseif act=="closestops" then SelStop=0; PickStops=false          -- back button: return to route list, keep selection
 elseif act=="selstop"   then SelStop=(SelStop==d[2] and 0 or d[2])
 elseif act=="nav_wp"    then SetNavWP(d[2],ActiveTab)
 elseif act=="nav_rt"    then SetNavRoute(d[2],ActiveTab,1)
@@ -1942,9 +2049,14 @@ elseif act=="newroute" then
   SetStatus("Type new route name in chat")
 elseif act=="addstop" then
   if SelRoute~="" then
-    PendingAction="addstop"
-    SetStatus("Type WP name or ::pos{} in chat")
+    PendingAction="addstop"; PickStops=true; SelWP=""
+    SetStatus("Click waypoints to add them in order, or type a name / ::pos{} in chat",10)
   end
+elseif act=="addstop_done" then
+  PickStops=false; if PendingAction=="addstop" then PendingAction="" end
+  SetStatus("Done adding stops")
+elseif act=="pickstop" then
+  if SelRoute~="" and d[2] then AddStop(SelRoute,d[2],ActiveTab) else PickStops=false end
 elseif act=="lock_wp" then
   local wname=d[2]
   if wname then
@@ -1987,6 +2099,8 @@ elseif act=="push"      then
     if org and OrgData[org] then PushToChannel(GetTabOrgChannel(),OrgData[org].wps,OrgData[org].routes)
     else SetStatus("No org tab selected") end
   end
+elseif act=="settings_open"  then ShowSettings=true
+elseif act=="settings_close" then ShowSettings=false
 elseif act=="firstsync_hint" then SetStatus("Type: firstsync CHANNEL  (channel shown on org sync PB screen)",10)
 -- Theme picker actions
 elseif act=="open_theme"  then
@@ -2213,14 +2327,14 @@ if PendingAction~="" then
     end
   elseif pa=="newroute" then TabAddRoute(t,ActiveTab)
   elseif pa=="addstop" then
-    if SelRoute~="" then AddStop(SelRoute,t,ActiveTab) end
+    if SelRoute~="" then AddStops(SelRoute,t,ActiveTab) end
   end
   DrawScreen(); return
 end
 
-if lo=="help" then
+if lo=="nhelp" or lo=="navhelp" then
   system.print("═══════════════════════════════════════")
-  system.print("  NAVIGATOR v2.1  CHAT COMMANDS")
+  system.print("  NAVIGATOR v2.3  CHAT COMMANDS  (nhelp)")
   system.print("═══════════════════════════════════════")
   system.print("── Waypoints ─────────────────────────")
   system.print("add NAME           save current pos as WP")
@@ -2229,15 +2343,21 @@ if lo=="help" then
   system.print("rename NEWNAME     rename selected WP or route")
   system.print("setpos ::pos{..}   update selected WP coords")
   system.print("nav                navigate to selected WP")
-  system.print("── Routes ────────────────────────────")
+  system.print("── Routes (select the route first) ───")
   system.print("newroute NAME      create empty route")
-  system.print("addstop WPname     add WP to selected route")
-  system.print("addstop ::pos{..}  add raw pos to selected route")
+  system.print("addstop WAYPOINT NAME   add a saved waypoint as the last stop")
+  system.print("addstop ::pos{..}       add coordinates as the last stop")
+  system.print("addstop NAME; NAME; ... add several stops, in that order")
   system.print("delstop N          remove stop N from selected route")
   system.print("del                delete selected route")
   system.print("nav                start route from stop 1")
-  system.print("next               advance to next stop")
-  system.print("prev               go back to previous stop")
+  system.print("next / prev        next / previous stop")
+  system.print("── Build a route ─────────────────────")
+  system.print("1. newroute Ore Run")
+  system.print("2. click Ore Run in ROUTES to select it")
+  system.print("3. addstop Home; Mine; ::pos{0,2,1.5,20.1,90}")
+  system.print("   (or click ADD STOP, then click waypoints in order)")
+  system.print("Stops fly in the order added.")
   system.print("── Sync / Push ───────────────────────")
   system.print("sync               sync personal from base")
   system.print("orgsync            sync org from org base (current tab)")
@@ -2291,7 +2411,7 @@ if nrN then TabAddRoute(Trim(nrN),ActiveTab); DrawScreen(); return end
 local asA=t:match("^[Aa][Dd][Dd][Ss][Tt][Oo][Pp]%s+(.*)")
 if asA then
   asA=Trim(asA)
-  if SelRoute=="" then SetStatus("Select a route first") else AddStop(SelRoute,asA,ActiveTab) end
+  if SelRoute=="" then SetStatus("Select a route first") else AddStops(SelRoute,asA,ActiveTab) end
   DrawScreen(); return
 end
 
@@ -2656,5 +2776,6 @@ if lo:sub(1,5)=="theme" then
   SetStatus("Unknown theme command. Type: theme"); DrawScreen(); return
 end
 
-SetStatus("Unknown: '"..lo.."'  type help")
+if HELM_WORDS[lo:match("^(%S+)") or ""] then return end  -- Helmsman's command
+SetStatus("Unknown: '"..lo.."'  type nhelp")
 DrawScreen()

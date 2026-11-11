@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR ORG BASE - ADMIN PB v2.2.0
+-- NAVIGATOR ORG BASE - ADMIN PB v2.3.0
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -289,7 +289,7 @@ do
   system.print("[ORG-ADMIN] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION="v2.2.0"
+local VERSION="v2.3.0"
 OrgChannel  ="NavOrg"      --export: Set once — saved to databank and read by Sync PB
 OrgName     ="MyOrg"       --export: Display name for this org (shown on sync PB screen)
 
@@ -1234,7 +1234,8 @@ args="screen_poll"
 ]]
 if not screen then return end
 local raw=screen.getScriptOutput()
-if not raw or raw=="" or raw==LastScreenOut then return end
+if not raw or raw=="" then LastScreenOut="" return end  -- no click: allow same button again
+if raw==LastScreenOut then return end
 LastScreenOut=raw
 local ok,d=pcall(json.decode,raw)
 if not ok or type(d)~="table" then return end
@@ -1524,7 +1525,7 @@ end
 
 if lo=="help" then
   system.print("══════════════════════════════════")
-  system.print("  ORG ADMIN v2.0  CHAT COMMANDS")
+  system.print("  ORG ADMIN v2.3  CHAT COMMANDS")
   system.print("══════════════════════════════════")
   system.print("add NAME ::pos{..}  add/update WP")
   system.print("del                 delete selected item")

@@ -8,7 +8,7 @@ All five Navigator programming boards support a full color theming system. You c
 
 ## Quick Start
 
-1. **Open the picker**: Click the `[THEME]` button in the bottom-right corner of any screen-equipped PB.
+1. **Open the picker**: Click the `[THEME]` button in the bottom-right corner of a base or org admin screen. On the ship screen, click `SETTINGS` in the footer, then `THEME`.
 2. **Select an element**: Click an element name in the left panel (Accent, Background, Text, etc.).
 3. **Pick a color**: Click the hue bar to choose a base hue, then click the saturation/brightness grid to fine-tune.
 4. **Save**: Click `Save` in the profile bar at the bottom, or type `theme save` in chat.
@@ -54,8 +54,8 @@ These are computed automatically — you do not need to set them:
 
 ### Available On
 
-- **Navigator Ship Screen** — click `[THEME]` in footer
-- **Navigator Base** �� click `[THEME]` in footer
+- **Navigator Ship Screen** — click `SETTINGS` in footer, then `THEME`
+- **Navigator Base** — click `[THEME]` in footer
 - **Navigator OrgBase Admin** — click `[THEME]` in footer
 - **Navigator Ship NoScreen** — press `Alt+0` (requires an optional Screen Unit linked to any slot — auto-detected)
 
@@ -203,7 +203,7 @@ This only works between ships and a **personal base** (`base.lua`) — org bases
 ### Navigator Ship Screen (`ship_screen.lua`)
 
 - **Default theme**: Cyan accent, dark blue background, gold headers
-- **Picker access**: Click `[THEME]` in footer
+- **Picker access**: Click `SETTINGS` in footer, then `THEME`
 - **Databank keys**: `theme_profile_active`, `theme_profile_names`, `theme_p_NAME`
 
 ### Navigator Ship NoScreen (`ship_noscreen.lua`)
