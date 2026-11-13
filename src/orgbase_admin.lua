@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR ORG BASE - ADMIN PB v2.3.0
+-- NAVIGATOR ORG BASE - ADMIN PB v2.3.1
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -289,7 +289,7 @@ do
   system.print("[ORG-ADMIN] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION="v2.3.0"
+local VERSION="v2.3.1"
 OrgChannel  ="NavOrg"      --export: Set once — saved to databank and read by Sync PB
 OrgName     ="MyOrg"       --export: Display name for this org (shown on sync PB screen)
 
@@ -1523,9 +1523,9 @@ if PendingAction~="" then
   DrawScreen(); return
 end
 
-if lo=="help" then
+if lo=="help" or lo=="nhelp" or lo=="navhelp" then
   system.print("══════════════════════════════════")
-  system.print("  ORG ADMIN v2.3  CHAT COMMANDS")
+  system.print("  ORG ADMIN v2.3.1  CHAT COMMANDS")
   system.print("══════════════════════════════════")
   system.print("add NAME ::pos{..}  add/update WP")
   system.print("del                 delete selected item")
@@ -1792,4 +1792,4 @@ if lo:sub(1,5)=="theme" then
   SetStatus("Unknown theme command. Type: theme"); DrawScreen(); return
 end
 
-SetStatus("Unknown: '"..lo.."'  type help"); DrawScreen()
+SetStatus("Unknown: '"..lo.."'  type nhelp"); DrawScreen()

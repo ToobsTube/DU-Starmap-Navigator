@@ -14,7 +14,7 @@ const CONFIGS = {
     // Emitter/navdatabank to ANY of them, in any order. The script
     // auto-detects each by probing at startup (see slot=-1 onStart in
     // src/ship_screen.lua) instead of relying on a fixed slot->role mapping.
-    output: 'Navigator_Ship_Screen_v2.3.txt',
+    output: 'Navigator_Ship_Screen_v2.3.1.txt',
     slots: {
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
@@ -22,7 +22,7 @@ const CONFIGS = {
   },
   ship_noscreen: {
     // Same auto-detect approach as ship_screen — see comment there.
-    output: 'Navigator_Ship_NoScreen_v2.3.txt',
+    output: 'Navigator_Ship_NoScreen_v2.3.1.txt',
     slots: {
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
@@ -30,7 +30,7 @@ const CONFIGS = {
   },
   base: {
     // Same auto-detect approach as the ship PBs — see comment there.
-    output: 'Navigator_Base_v2.3.txt',
+    output: 'Navigator_Base_v2.3.1.txt',
     slots: {
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
@@ -38,7 +38,7 @@ const CONFIGS = {
   },
   orgbase_admin: {
     // Same auto-detect approach as the ship PBs — see comment there.
-    output: 'Navigator_OrgBase_Admin_v2.3.txt',
+    output: 'Navigator_OrgBase_Admin_v2.3.1.txt',
     slots: {
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
@@ -46,7 +46,7 @@ const CONFIGS = {
   },
   orgbase_sync: {
     // Same auto-detect approach as the other four PBs — see comment there.
-    output: 'Navigator_OrgBase_Sync_v2.3.txt',
+    output: 'Navigator_OrgBase_Sync_v2.3.1.txt',
     slots: {
       '-1': 'unit',    '-2': 'construct', '-3': 'player',
       '-4': 'system',  '-5': 'library',
@@ -189,7 +189,7 @@ console.log('\n=== Package ===');
 const { execSync } = require('child_process');
 const os = require('os');
 
-const VERSION    = 'v2.3';
+const VERSION    = 'v2.3.1';
 const STAGE_DIR  = path.join(os.tmpdir(), 'nav_release');
 const ZIP_OUT    = path.resolve(`dist/Navigator_${VERSION}.zip`);
 

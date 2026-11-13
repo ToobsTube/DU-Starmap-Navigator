@@ -1,8 +1,18 @@
-# DU Starmap Navigator v2.3
+# DU Starmap Navigator v2.3.1
 
 A waypoint and route navigation system for **Dual Universe** built on Programming Boards. Save locations, build multi-stop routes, share waypoints with your org, and calculate realistic travel times — all from a screen UI or an AR HUD.
 
 ---
+
+## What's new in v2.3.1
+
+- **Rename on the no-screen PB** — `rename OLD NAME > NEW NAME` for waypoints and `renameroute OLD NAME > NEW NAME` for routes. Coords, locks, and stops are kept.
+- **"Navigator" widget** — both ship PBs show a widget titled Navigator so it's clear what's running. Untick the `NavWidget` parameter to keep the board's default widget (it shows your own PB name).
+- **`nhelp` everywhere** — every PB's startup line and messages now point to `nhelp`, and the base PBs accept it too (plain `help` still works on bases).
+- **Flight-script databank detection** — the optional 2nd databank is recognized from more flight scripts' data, not just Arch HUD and Saga. You can also rename it to include "flight" so it's picked up right away. The startup line now reads `[NAV] Flight-script bank=OK`.
+- **Clearer linking instructions** — link elements in any order; leaving out optional ones is fine. When adding a flight-script databank, link Navigator's own databank first.
+
+Upgrading from v2.3: re-import the PBs you use. Nothing else changes, and all saved data is kept.
 
 ## What's new in v2.3
 
@@ -40,11 +50,11 @@ Upgrading from v2.2: re-import the PBs you use. Saved waypoints, routes, and the
 
 | File | Purpose |
 |------|---------|
-| Navigator_Ship_Screen_v2.3.txt | Ship PB — clickable screen UI |
-| Navigator_Ship_NoScreen_v2.3.txt | Ship PB — AR HUD, no screen required |
-| Navigator_Base_v2.3.txt | Personal base PB |
-| Navigator_OrgBase_Admin_v2.3.txt | Org base — admin and editing |
-| Navigator_OrgBase_Sync_v2.3.txt | Org base — serves waypoints to ships |
+| Navigator_Ship_Screen_v2.3.1.txt | Ship PB — clickable screen UI |
+| Navigator_Ship_NoScreen_v2.3.1.txt | Ship PB — AR HUD, no screen required |
+| Navigator_Base_v2.3.1.txt | Personal base PB |
+| Navigator_OrgBase_Admin_v2.3.1.txt | Org base — admin and editing |
+| Navigator_OrgBase_Sync_v2.3.1.txt | Org base — serves waypoints to ships |
 
 All files are in the `dist/` folder. Tools (backup/restore, databank inspector) are in `dist/tools/`.
 
@@ -54,13 +64,13 @@ All files are in the `dist/` folder. Tools (backup/restore, databank inspector) 
 
 ### Personal use (ship + base)
 
-1. Import `Navigator_Base_v2.3.txt` into a PB at your base. Slots are **auto-detected** — link a Screen Unit, Databank, Receiver, and Emitter to any of the PB's slots, in any order.
+1. Import `Navigator_Base_v2.3.1.txt` into a PB at your base. Slots are **auto-detected** — link a Screen Unit, Databank, Receiver, and Emitter to any of the PB's slots, in any order.
 
 2. Import your chosen ship PB. Slots are **auto-detected** here too — link the required elements to any of the PB's slots, in any order:
 
-   **Screen version:** Screen Unit, Databank, Receiver, Emitter — plus an optional 2nd Databank if using Arch/Saga.
+   **Screen version:** Screen Unit, Databank, Receiver, Emitter — plus an optional 2nd Databank shared with your flight script (Arch HUD, Saga, etc.).
 
-   **No-screen version:** Databank, Receiver, Emitter — plus an optional Screen Unit (for the mouse-driven Theme Editor) and an optional 2nd Databank if using Arch/Saga.
+   **No-screen version:** Databank, Receiver, Emitter — plus an optional Screen Unit (for the mouse-driven Theme Editor) and an optional 2nd Databank shared with your flight script (Arch HUD, Saga, etc.).
 
    After activating either PB, check the Lua console: it prints a line like `[NAV] slot1=databank  slot2=receiver  slot3=emitter` (base prints `[BASE] ...`) confirming what it detected in each slot. If something looks wrong (e.g. an element shows up as `unrecognized`), that element isn't one of the supported types for this PB — check what's actually linked there.
 

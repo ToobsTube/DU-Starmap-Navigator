@@ -1,10 +1,10 @@
 -- ================================================================
--- NAVIGATOR SHIP - SCREEN VERSION v2.3.0
+-- NAVIGATOR SHIP - SCREEN VERSION v2.3.1
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
 --   Required: Screen Unit, Databank, Receiver, Emitter
---   Optional: a 2nd Databank (Arch/Saga navdatabank)
+--   Optional: a 2nd Databank (flight-script navdatabank: Arch, Saga, Helmsman)
 -- Check the Lua console after activating for a "[NAV] slot1=... slot2=..." line
 -- confirming what was detected as what.
 --
@@ -365,7 +365,7 @@ args=
 
 -- ── Slot auto-detect ────────────────────────────────────────────
 -- Link Screen, Databank, Receiver, Emitter to ANY of the PB's slots, in any
--- order. A second Databank (Arch/Saga navdatabank) is optional and also goes
+-- order. A second Databank (flight-script navdatabank: Arch, Saga, Helmsman) is optional and also goes
 -- in any slot. Detected by probing each linked element with a harmless
 -- read-only call and seeing which one succeeds — same trick as
 -- tools/databank_copy.lua uses for its two databanks. Check the Lua console
@@ -445,7 +445,7 @@ do
       local nm=tryName(s)
       if not nm then return false end
       local lo=nm:lower()
-      return lo:find("arch") or lo:find("saga") or lo:find("hud") or lo:find("nav2")
+      return lo:find("arch") or lo:find("saga") or lo:find("hud") or lo:find("nav2") or lo:find("flight") or lo:find("helm")
     end
     local navKeys={"personal_wps","theme_profile_active","theme_profile_names","org_names"}
     local function looksPrimary(d)
@@ -458,7 +458,9 @@ do
     -- Real Arch/Saga data is just as valid a positive signal for navdatabank
     -- as Navigator's own keys are for primary — check for it explicitly so
     -- an actually-in-use HUD databank isn't mistaken for foreign/wrong data.
-    local hudKeys={"SavedLocations","SagaRoutes","SagaConf"}
+    local hudKeys={"SavedLocations","SagaRoutes","SagaConf",
+      "sf_target","sf_landsafety","sf_ground_range",  -- Helmsman
+      "nav_ap_dest","nav_arch_dest","nav_saga_dest"}  -- written here by Navigator itself
     local function looksLikeHudData(d)
       for _,k in ipairs(hudKeys) do
         local ok,v=pcall(function() return d.getStringValue(k) end)
@@ -508,10 +510,10 @@ do
     -- this same handler — after StatusMsg="" resets it — can pick it up and
     -- show it on the screen too, not just the Lua console. See below.
     if pickedBy=="guess" then
-      system.print("[NAV] NOTE: 2 databanks linked, both blank and unnamed — guessed which is which by slot order (see below). If that's backwards, rename the Arch/Saga one in-game (right-click -> Rename) to include \"arch\", \"saga\", or \"hud\", then reactivate the PB.")
+      system.print("[NAV] NOTE: 2 databanks linked, both blank and unnamed — guessed which is which by slot order (see below). If that's backwards, rename your flight-script databank in-game (right-click -> Rename) to include \"flight\", \"arch\" or \"saga\", then reactivate the PB.")
       SlotWarningMsg="Check console: DB guess"
     elseif pickedBy=="foreign-data" then
-      system.print("[NAV] WARNING: 2 databanks linked, but one has existing data that isn't Navigator's or Arch/Saga's — double check the right elements are linked (see slot list below) before trusting this setup. Guessed by slot order for now.")
+      system.print("[NAV] WARNING: 2 databanks linked, but one has existing data that isn't Navigator's or a known flight script's — double check the right elements are linked (see slot list below) before trusting this setup. Guessed by slot order for now.")
       SlotWarningMsg="Check console: DB link?"
     end
   end
@@ -528,7 +530,7 @@ do
   if not screen then system.print("[NAV] WARNING: no Screen Unit detected — this is the screen version, link one") end
 end
 
-local VERSION="v2.3.0"
+local VERSION="v2.3.1"
 Atlas        =nil
 CustomAtlas ="atlas"   --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
@@ -539,6 +541,7 @@ CalcAccel   =5        --export: Time Calc fallback acceleration in m/s2 — igno
 AccentR=0    --export: Screen accent color Red 0-255 (default 0)
 AccentG=200  --export: Screen accent color Green 0-255 (default 200)
 AccentB=255  --export: Screen accent color Blue 0-255 (default 255)
+NavWidget=true --export: Show a "Navigator" widget in place of the board's default one. Untick to keep the default widget (shows your own PB name).
 
 -- Runtime state
 PersonalWPs     = {}
@@ -1905,11 +1908,17 @@ Palette=DeriveTheme(ThemeSlots)
 CurrentPos=GetCurrentPos()
 if screen then screen.activate() end
 UpdateChannels()
-if navdatabank then system.print("[NAV] HUD bank=OK (Arch+Saga)") end
+if navdatabank then system.print("[NAV] Flight-script bank=OK") end
 unit.setTimer("nav_tick",1)
 unit.setTimer("screen_poll",0.05)
 UpdateWaypoint()
-system.print("=== Navigator "..VERSION.." ===  "..ShipID)
+-- Title-only panel so players can tell what's running. Lua can't rename the
+-- element, so the board's own widget (titled with the PB's in-game name) is
+-- hidden instead. pcall: a widget failure must never stop the PB.
+if NavWidget then
+  pcall(function() unit.hideWidget(); NavPanel=system.createWidgetPanel("Navigator") end)
+end
+system.print("=== Navigator "..VERSION.." ===  "..ShipID.."  |  type: nhelp")
 DrawScreen()
 
 
@@ -1919,6 +1928,7 @@ event=onStop()
 args=
 ]]
 if NavTarget and NavTarget.c then ClearMapWaypoint() end
+if NavPanel then pcall(system.destroyWidgetPanel,NavPanel) end
 if screen then
   local P=Palette
   screen.setRenderScript(string.format([[
@@ -2334,7 +2344,7 @@ end
 
 if lo=="nhelp" or lo=="navhelp" then
   system.print("═══════════════════════════════════════")
-  system.print("  NAVIGATOR v2.3  CHAT COMMANDS  (nhelp)")
+  system.print("  NAVIGATOR v2.3.1  CHAT COMMANDS  (nhelp)")
   system.print("═══════════════════════════════════════")
   system.print("── Waypoints ─────────────────────────")
   system.print("add NAME           save current pos as WP")

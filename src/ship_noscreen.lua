@@ -1,10 +1,10 @@
 -- ================================================================
--- NAVIGATOR SHIP - NO SCREEN VERSION v2.3.0
+-- NAVIGATOR SHIP - NO SCREEN VERSION v2.3.1
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
 --   Required: Databank, Receiver, Emitter
---   Optional: Screen Unit (for the theme picker), a 2nd Databank (Arch/Saga navdatabank)
+--   Optional: Screen Unit (for the theme picker), a 2nd Databank (flight-script navdatabank: Arch, Saga, Helmsman)
 -- Check the Lua console after activating for a "[NAV] slot1=... slot2=..." line
 -- confirming what was detected as what.
 --
@@ -624,7 +624,7 @@ args=
 
 -- ── Slot auto-detect ────────────────────────────────────────────
 -- Link Databank, Receiver, Emitter to ANY of the PB's slots, in any order.
--- Screen and a second Databank (Arch/Saga navdatabank) are optional and also
+-- Screen and a second Databank (flight-script navdatabank: Arch, Saga, Helmsman) are optional and also
 -- go in any slot. Detected by probing each linked element with a harmless
 -- read-only call and seeing which one succeeds — same trick as
 -- tools/databank_copy.lua uses for its two databanks. Check the Lua console
@@ -704,7 +704,7 @@ do
       local nm=tryName(s)
       if not nm then return false end
       local lo=nm:lower()
-      return lo:find("arch") or lo:find("saga") or lo:find("hud") or lo:find("nav2")
+      return lo:find("arch") or lo:find("saga") or lo:find("hud") or lo:find("nav2") or lo:find("flight") or lo:find("helm")
     end
     local navKeys={"personal_wps","theme_profile_active","theme_profile_names","org_names"}
     local function looksPrimary(d)
@@ -717,7 +717,9 @@ do
     -- Real Arch/Saga data is just as valid a positive signal for navdatabank
     -- as Navigator's own keys are for primary — check for it explicitly so
     -- an actually-in-use HUD databank isn't mistaken for foreign/wrong data.
-    local hudKeys={"SavedLocations","SagaRoutes","SagaConf"}
+    local hudKeys={"SavedLocations","SagaRoutes","SagaConf",
+      "sf_target","sf_landsafety","sf_ground_range",  -- Helmsman
+      "nav_ap_dest","nav_arch_dest","nav_saga_dest"}  -- written here by Navigator itself
     local function looksLikeHudData(d)
       for _,k in ipairs(hudKeys) do
         local ok,v=pcall(function() return d.getStringValue(k) end)
@@ -767,10 +769,10 @@ do
     -- this same handler — after StatusMsg="" resets it — can pick it up and
     -- show it on the AR HUD too, not just the Lua console. See below.
     if pickedBy=="guess" then
-      system.print("[NAV] NOTE: 2 databanks linked, both blank and unnamed — guessed which is which by slot order (see below). If that's backwards, rename the Arch/Saga one in-game (right-click -> Rename) to include \"arch\", \"saga\", or \"hud\", then reactivate the PB.")
+      system.print("[NAV] NOTE: 2 databanks linked, both blank and unnamed — guessed which is which by slot order (see below). If that's backwards, rename your flight-script databank in-game (right-click -> Rename) to include \"flight\", \"arch\" or \"saga\", then reactivate the PB.")
       SlotWarningMsg="Check console: DB guess"
     elseif pickedBy=="foreign-data" then
-      system.print("[NAV] WARNING: 2 databanks linked, but one has existing data that isn't Navigator's or Arch/Saga's — double check the right elements are linked (see slot list below) before trusting this setup. Guessed by slot order for now.")
+      system.print("[NAV] WARNING: 2 databanks linked, but one has existing data that isn't Navigator's or a known flight script's — double check the right elements are linked (see slot list below) before trusting this setup. Guessed by slot order for now.")
       SlotWarningMsg="Check console: DB link?"
     end
   end
@@ -786,7 +788,7 @@ do
   system.print("[NAV] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION="v2.3.0"
+local VERSION="v2.3.1"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 CalcSpeed   =0        --export: Time Calc max speed in space in km/h. 0 = auto-detect your ship's actual max speed. Set a value to plan at a slower cruise speed instead (e.g. to save fuel).
@@ -798,6 +800,7 @@ AccentG=200  --export: HUD accent color Green 0-255 (default 200)
 AccentB=255  --export: HUD accent color Blue 0-255 (default 255)
 HudX=13     --export: HUD left position in % from screen edge (default 13)
 HudY=15     --export: HUD top position in % from screen edge (default 15)
+NavWidget=true --export: Show a "Navigator" widget in place of the board's default one. Untick to keep the default widget (shows your own PB name).
 
 PersonalWPs    = {}
 PersonalRoutes = {}
@@ -932,6 +935,23 @@ function DelRoute(name)
   end
   SetStatus("Route not found: "..name); return false
 end
+
+-- Shared by rename / renameroute. A case-only change (e.g. "home" -> "Home")
+-- is allowed: the duplicate check skips the entry being renamed.
+local function RenameIn(list,old,new_,kind,navT)
+  local hit
+  for _,v in ipairs(list) do if v.n:lower()==old:lower() then hit=v break end end
+  if not hit then SetStatus(kind.." not found: "..old) return false end
+  for _,v in ipairs(list) do
+    if v~=hit and v.n:lower()==new_:lower() then SetStatus("Name already exists: "..new_) return false end
+  end
+  local was=hit.n; hit.n=new_
+  if NavTarget and NavTarget.t==navT and NavTarget.n:lower()==was:lower() then NavTarget.n=new_ end
+  table.sort(list,function(a,b) return a.n:lower()<b.n:lower() end)
+  SaveData(); SetStatus("Renamed: "..was.." -> "..new_); return true
+end
+function RenameWP(old,new_)    return RenameIn(ContextWPs(),old,new_,"WP","wp") end
+function RenameRoute(old,new_) return RenameIn(ContextRoutes(),old,new_,"Route","route") end
 
 function AddStop(routeName,arg)
   local routes=ContextRoutes(); local wps=ContextWPs()
@@ -1680,7 +1700,7 @@ LoadData()
 ThemeSlots=LoadTheme()
 Palette=DeriveTheme(ThemeSlots)
 UpdateChannels()
-if navdatabank then system.print("[NAV] HUD bank=OK (Arch+Saga)") end
+if navdatabank then system.print("[NAV] Flight-script bank=OK") end
 unit.setTimer("nav_tick",5)
 UpdateWaypoint()
 if screen then
@@ -1689,9 +1709,15 @@ if screen then
   unit.setTimer("screen_poll",0.05)
 end
 DrawHUD()
+-- Title-only panel so players can tell what's running. Lua can't rename the
+-- element, so the board's own widget (titled with the PB's in-game name) is
+-- hidden instead. pcall: a widget failure must never stop the PB.
+if NavWidget then
+  pcall(function() unit.hideWidget(); NavPanel=system.createWidgetPanel("Navigator") end)
+end
 system.print("=== Navigator "..VERSION.." (No Screen) ===  "..ShipID)
 system.print("Target: "..(NavTarget and NavTarget.n or "none"))
-system.print("Alt+Q/C = scroll  |  Alt+D = select  |  Shift = toggle HUD  |  type: help"..
+system.print("Alt+Q/C = scroll  |  Alt+D = select  |  Shift = toggle HUD  |  type: nhelp"..
   (screen and "  |  Alt+0 = theme picker" or ""))
 
 
@@ -1701,6 +1727,7 @@ event=onStop()
 args=
 ]]
 system.showScreen(0)
+if NavPanel then pcall(system.destroyWidgetPanel,NavPanel) end
 if screen then
   if not Palette then Palette=DeriveTheme(ThemeSlots or DefaultShipTheme()) end
   local P=Palette
@@ -2058,11 +2085,13 @@ local t=Trim(text); local lo=t:lower()
 
 if lo=="nhelp" or lo=="navhelp" then
   system.print("═══════════════════════════════")
-  system.print("  NAVIGATOR v2.3  (No Screen)")
+  system.print("  NAVIGATOR v2.3.1  (No Screen)")
   system.print("═══════════════════════════════")
   system.print("add NAME [::pos{..}]   save WP")
   system.print("del NAME               delete WP")
+  system.print("rename OLD > NEW       rename WP")
   system.print("newroute NAME          create route")
+  system.print("renameroute OLD > NEW  rename route")
   system.print("addstop ROUTE > WAYPOINT NAME    add a saved waypoint as the last stop")
   system.print("addstop ROUTE > ::pos{..}        add coordinates as the last stop")
   system.print("addstop ROUTE > NAME; NAME; ...  add several stops, in that order")
@@ -2162,6 +2191,16 @@ if dsRT then DelStop(Trim(dsRT),tonumber(dsN)); return end
 
 local drN=t:match("^[Dd][Ee][Ll][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
 if drN then DelRoute(Trim(drN)); return end
+
+-- rename OLD > NEW / renameroute OLD > NEW   ('>' lets names contain spaces)
+local rnKind=lo:match("^(%a+)")
+if rnKind=="rename" or rnKind=="renameroute" then
+  local o,n=t:sub(#rnKind+1):match("^(.-)>(.*)$")
+  o=o and Trim(o) or ""; n=n and Trim(n) or ""
+  if o=="" or n=="" then SetStatus("Usage: "..rnKind.." OLD NAME > NEW NAME"); return end
+  if rnKind=="rename" then RenameWP(o,n) else RenameRoute(o,n) end
+  return
+end
 
 local navN=t:match("^[Nn][Aa][Vv]%s+(.*)")
 if navN then

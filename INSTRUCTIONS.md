@@ -1,4 +1,4 @@
-# DU Starmap Navigator v2.3 — Setup & User Guide
+# DU Starmap Navigator v2.3.1 — Setup & User Guide
 
 ## Overview
 
@@ -24,7 +24,7 @@ Most players will use one ship PB and Navigator_Base. If you are part of an org,
 - 1x Databank
 - 1x Receiver
 - 1x Emitter
-- 1x Databank *(optional — only needed for Arch HUD or Saga HUD integration)*
+- 1x Databank *(optional — the databank your flight script's seat uses, e.g. Arch HUD or Saga, for the autopilot hand-off)*
 
 ### Ship (No Screen version)
 - 1x Programming Board
@@ -32,7 +32,7 @@ Most players will use one ship PB and Navigator_Base. If you are part of an org,
 - 1x Receiver
 - 1x Emitter
 - 1x Screen Unit *(optional — only needed for the Theme Editor)*
-- 1x Databank *(optional — only needed for Arch HUD or Saga HUD integration)*
+- 1x Databank *(optional — the databank your flight script's seat uses, e.g. Arch HUD or Saga, for the autopilot hand-off)*
 
 ### Personal Base
 - 1x Programming Board
@@ -52,15 +52,17 @@ You need TWO programming boards at the base:
 
 All five PBs use **slot auto-detection** — link the elements they need to any of the PB's slots, in any order. At startup, each script probes every linked element and figures out what it is; there's no fixed slot-number table to follow.
 
-**Navigator_Ship_Screen needs:** Screen Unit, Databank, Receiver, Emitter, plus an optional 2nd Databank (shared with Arch HUD or Saga HUD, for HUD integration).
+**Navigator_Ship_Screen needs:** Screen Unit, Databank, Receiver, Emitter, plus an optional 2nd Databank (the one your flight script's seat uses, such as Arch HUD or Saga, for the autopilot hand-off).
 
-**Navigator_Ship_NoScreen needs:** Databank, Receiver, Emitter, plus an optional Screen Unit (for the mouse-driven Theme Editor only) and an optional 2nd Databank (same Arch/Saga HUD integration purpose).
+**Navigator_Ship_NoScreen needs:** Databank, Receiver, Emitter, plus an optional Screen Unit (for the mouse-driven Theme Editor only) and an optional 2nd Databank (your flight-script databank, same purpose).
 
 **Navigator_Base needs:** Screen Unit, Databank, Receiver, Emitter.
 
 **Navigator_OrgBase_Admin needs:** Screen Unit, Databank (the same physical databank as the Sync PB — see below). No Receiver/Emitter — the Admin PB doesn't talk to ships directly, that's the Sync PB's job.
 
 **Navigator_OrgBase_Sync needs:** Screen Unit, Databank (the same physical databank as the Admin PB), Receiver, Emitter.
+
+**Optional elements can simply be left out.** Without the optional Screen Unit, the No Screen PB works exactly the same; you just change themes through chat (`theme ...`) instead of the on-screen picker. Without the optional 2nd Databank, everything works except handing destinations to your flight script's autopilot.
 
 After activating, check the Lua console — it prints a confirmation line such as:
 ```
@@ -69,13 +71,15 @@ After activating, check the Lua console — it prints a confirmation line such a
 (`[BASE]` on Navigator_Base, `[ORG-ADMIN]` on Navigator_OrgBase_Admin, `[ORG-SYNC]` on Navigator_OrgBase_Sync.) Only linked slots are listed. Each element shows the role it was detected as (`databank`, `navdatabank`, `receiver`, `emitter`, `screen`), or `unrecognized` if it couldn't identify what's linked there — in which case double-check that slot actually holds one of the supported element types.
 
 **How the two databanks are told apart (ship PBs only):** if only one Databank is linked, it's used as the primary. If two are linked:
-1. **Naming hint (most reliable):** if you've renamed the Arch/Saga databank in-game (right-click the element → Rename) to include "arch", "saga", "hud", or "nav2" anywhere in the name, it's recognized as `navdatabank` regardless of what's in it. Recommended, especially for a brand-new setup where both databanks start out empty. Confirmed working in-game 2026-09-06.
-2. **Contents:** otherwise, whichever one already has Navigator's own data in it (waypoints, theme, etc.) is treated as primary and the other as `navdatabank`.
-3. **Slot order (last resort):** if neither hint applies, it falls back to slot order (first found = primary) — and tells you it did, both in the Lua console **and** on the ship's own display (AR HUD status line or screen footer, whichever this PB has), so you don't have to be watching Lua chat to notice:
+1. **Naming hint (most reliable):** if you've renamed the flight-script databank in-game (right-click the element → Rename) to include "flight", "arch", "saga", "hud", "helm", or "nav2" anywhere in the name, it's recognized as `navdatabank` regardless of what's in it. Recommended, especially for a brand-new setup where both databanks start out empty.
+2. **Contents:** otherwise, whichever one already has Navigator's own data in it (waypoints, theme, etc.) is treated as primary. Failing that, whichever one has flight-script data in it (Arch HUD's saved locations and settings, Saga's routes and config, or Navigator's own destination keys) is treated as `navdatabank`. On a typical first install this is what decides it: Navigator's databank is new and empty, but your flight script has already been using its databank.
+3. **Link order (last resort):** if neither hint applies, the databank you linked **first** becomes the primary and the second becomes `navdatabank` (DU puts each new link in the lowest free slot, so first linked = lowest slot number). This only happens when both are blank and unnamed, such as a brand-new flight-script databank that hasn't been used yet. To avoid it, link Navigator's own databank before the flight-script one. When it does happen, it tells you, both in the Lua console **and** on the ship's own display (AR HUD status line or screen footer, whichever this PB has), so you don't have to be watching Lua chat to notice:
    - Both databanks completely blank and unnamed → `Check console: DB guess` on the HUD/screen, full detail in the console.
-   - One of them has *some* data, just not Navigator's or Arch/Saga's (e.g. a databank reused from another script) → `Check console: DB link?` on the HUD/screen — this is the stronger warning, since it suggests the wrong element may be linked rather than just an ambiguous fresh install.
+   - One of them has *some* data, just not Navigator's or a recognized flight script's (e.g. a databank reused from another script) → `Check console: DB link?` on the HUD/screen — this is the stronger warning, since it suggests the wrong element may be linked rather than just an ambiguous fresh install.
 
-The console line shows each linked element's detected name in parentheses when available, e.g. `slot5=navdatabank(ArchDB)` — use it to confirm it picked correctly, and if not, just swap which physical databank goes to your Arch/Saga seat (or rename it).
+The console line shows each linked element's detected name in parentheses when available, e.g. `slot5=navdatabank(ArchDB)` — use it to confirm it picked correctly. If it got them backwards, rename the flight-script databank to include "flight" (or "arch"/"saga") and restart the PB. Alternatively, unlink both databanks from the PB and relink Navigator's first.
+
+The order you link everything else in (Screen, Receiver, Emitter) doesn't matter at all.
 
 > **Important:** The Admin and Sync PBs must share the **same physical databank**. The Admin writes data, the Sync reads and serves it to ships. This still works with auto-detect — it's the same physical element being linked to both PBs, regardless of which slot number it lands in on each.
 
@@ -94,6 +98,7 @@ The console line shows each linked element's detected name in parentheses when a
 | `CalcBrake` | `0` | Your ship's total brake force in kN from your ship's stats screen. When set, the script decelerates using brakes rather than a flip-and-burn. Leave at `0` to let the script read brake force automatically from the construct; if that also fails it falls back to using thrust for deceleration. |
 | `CalcAccel` | `5` | Fallback acceleration in m/s² — only used if `CalcThrust` is `0`. |
 | `AccentR/G/B` | `0 / 200 / 255` | Starting accent color (RGB 0–255). The in-game Theme Editor overrides this once you save a theme. |
+| `NavWidget` | `true` (ticked) | Replaces the board's default widget with one titled **Navigator**, so it's clear what's running. Untick it if you've renamed the PB in-game and want the default widget (which shows your PB's name) instead. |
 
 #### No Screen version only
 | Parameter | Default | Description |
@@ -124,8 +129,8 @@ No export parameters. It reads its channel and org name from the shared databank
 
 ## Personal Setup (Most Players)
 
-1. Place Navigator_Base at your base. Connect Screen, Databank, Receiver, Emitter in slot order.
-2. Place your ship PB on your ship. Connect elements in slot order.
+1. Place Navigator_Base at your base. Link a Screen, Databank, Receiver, and Emitter to it, in any order.
+2. Place your ship PB on your ship and link its elements, in any order (see [Slot Connections](#slot-connections)). If you're adding a 2nd Databank for your flight script, link Navigator's own databank first.
 3. Set `BaseChannel` to the same value on both (the default `NavBase` works if you only have one base).
 4. Turn on the base PB — it shows a screen with tabs.
 5. Turn on the ship PB — it loads your waypoints from the databank.
@@ -287,7 +292,7 @@ Type these in Lua chat while the PB is running. Most editing actions can also be
 | `theme ...` | Theme commands (`show`, `save`, `load`, `push`, `export`, `import`, etc.) — see [THEME_GUIDE.md](THEME_GUIDE.md) |
 | `nhelp` | Show all commands in Lua chat (`navhelp` also works) |
 
-> **Why `nhelp`?** Every running script receives every Lua chat line. Flight scripts use `help` too, so Navigator's ship PBs answer `nhelp` instead and leave `help` to your flight script. Navigator also stays quiet about common flight-script commands (`ap`, `goto`, `hud`, `stop`…) instead of replying "Unknown". Base PBs still use `help`.
+> **Why `nhelp`?** Every running script receives every Lua chat line. Flight scripts use `help` too, so Navigator's ship PBs answer `nhelp` instead and leave `help` to your flight script. Navigator also stays quiet about common flight-script commands (`ap`, `goto`, `hud`, `stop`…) instead of replying "Unknown". Base PBs answer `nhelp` too (plain `help` also still works there, since no flight script runs on a base), so `nhelp` works on every Navigator PB.
 
 ---
 
@@ -369,7 +374,9 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | `add NAME` | Add a waypoint at your current position |
 | `add NAME ::pos{...}` | Add or update a waypoint with specific coords |
 | `del NAME` | Delete a waypoint by name |
+| `rename OLD NAME > NEW NAME` | Rename a waypoint (keeps its coords and lock) |
 | `newroute NAME` | Create a new route |
+| `renameroute OLD NAME > NEW NAME` | Rename a route (keeps its stops) |
 | `addstop ROUTE > WAYPOINT NAME` | Add a saved waypoint as the last stop on a route |
 | `addstop ROUTE > ::pos{...}` | Add coordinates as the last stop on a route |
 | `addstop ROUTE > NAME; NAME; ...` | Add several stops at once, in that order |
@@ -422,14 +429,14 @@ The Navigator can send waypoints directly to Arch HUD as a temporary navigation 
 
 2. In the game, link the **same databank** that your Arch HUD control seat uses to any open slot on your Navigator PB (it's auto-detected — see Slot Connections above).
 
-3. That's it. When the Navigator PB starts it will print `[NAV] HUD bank=OK (Arch+Saga)` confirming the connection.
+3. That's it. When the Navigator PB starts it will print `[NAV] Flight-script bank=OK` confirming the connection.
 
 ### How it works
 
 Every time you navigate to a waypoint or route stop, the Navigator writes the destination to the shared databank. Arch HUD reads it on the next tick, sets it as a temporary nav target (same as typing the `::pos` in chat), and clears the key. Nothing is saved permanently in Arch.
 
 You will see these messages in Lua chat when it fires:
-- `[NAV] HUD bank=OK (Arch+Saga)` — on PB start, confirms the databank is linked
+- `[NAV] Flight-script bank=OK` — on PB start, confirms the databank is linked
 - `[NAV] sent to HUD bank: NAME` — each time a waypoint is sent
 
 ---
@@ -444,7 +451,7 @@ The Navigator can send waypoints directly to Saga HUD 4.22 as a temporary naviga
 
 2. Link the **same databank** that your Navigator PB detected as its `navdatabank` (check the startup console line) to your Saga control seat as well.
 
-3. That's it. When the Navigator PB starts it will print `[NAV] HUD bank=OK (Arch+Saga)` confirming the connection.
+3. That's it. When the Navigator PB starts it will print `[NAV] Flight-script bank=OK` confirming the connection.
 
 ### How it works
 
@@ -453,7 +460,7 @@ Every time you navigate to a waypoint or route stop, the Navigator writes the de
 If **Auto Fly** is enabled in Navigator, Saga's autopilot is also engaged automatically after the target is set.
 
 You will see these messages in Lua chat:
-- `[NAV] HUD bank=OK (Arch+Saga)` — on PB start
+- `[NAV] Flight-script bank=OK` — on PB start
 - `[NAV] sent to HUD bank: NAME` — each time a waypoint is sent
 - `[NAV] Target: NAME` — from Saga confirming it received the target
 
@@ -611,16 +618,16 @@ Clears all data from any number of linked databanks. Link one or more databanks 
 
 **Script error on start, HUD loads but responds slowly (No Screen version)**
 - The startup console line will show `unrecognized` for a linked element that isn't a Screen Unit, Databank, Receiver, or Emitter — that's almost always the culprit, since the script only knows how to handle those four types.
-- If you have exactly the elements you expect linked and this still happens, check for a **second Databank auto-detection mismatch**: with two databanks linked and both still empty (fresh install), the script guesses which is primary by slot order — see "How the two databanks are told apart" in the Slot Connections section above. Swap which physical databank goes to your Arch/Saga seat if it guessed wrong.
+- If you have exactly the elements you expect linked and this still happens, check for a **second Databank auto-detection mismatch**: with two databanks linked and both still empty (fresh install), the script guesses which is primary by link order — see "How the two databanks are told apart" in the Slot Connections section above. If it guessed wrong, rename the flight-script databank to include "flight" and restart the PB.
 
 **Arch HUD does not respond to waypoints**
-- Check that `[NAV] HUD bank=OK (Arch+Saga)` prints when the Navigator PB starts. If it doesn't, no second databank was detected as `navdatabank` — check the startup console line.
+- Check that `[NAV] Flight-script bank=OK` prints when the Navigator PB starts. If it doesn't, no second databank was detected as `navdatabank` — check the startup console line.
 - Make sure the `userclass.lua` file is placed at exactly: `Game\data\lua\autoconf\custom\archhud\userclass.lua`
 - Make sure the databank detected as `navdatabank` is the same physical databank that your Arch HUD control seat is linked to.
 
 **Saga HUD does not respond to waypoints**
 - Make sure you imported `Saga_AP_4.22_Nav.json` (the patched version), not the standard Saga JSON.
-- Check that `[NAV] HUD bank=OK (Arch+Saga)` prints when the Navigator PB starts.
+- Check that `[NAV] Flight-script bank=OK` prints when the Navigator PB starts.
 - Make sure the databank detected as `navdatabank` (check the startup console line) is also linked to your Saga control seat.
 - If you wiped the databank, Navigator's waypoints are also cleared — add a waypoint first before testing.
 - You should see `[NAV] Target: NAME` in the Lua console from Saga when a target is received.
