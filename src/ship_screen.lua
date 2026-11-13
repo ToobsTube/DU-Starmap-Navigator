@@ -668,7 +668,7 @@ end
 function TabRenameWP(oldName,newName,tab)
   local list=(tab==0) and PersonalWPs or (OrgData[OrgNames[tab]] and OrgData[OrgNames[tab]].wps)
   if not list then return end
-  for _,v in ipairs(list) do if v.n:lower()==newName:lower() then SetStatus("Name already exists: "..newName) return end end
+  for _,v in ipairs(list) do if v.n:lower()==newName:lower() and v.n:lower()~=oldName:lower() then SetStatus("Name already exists: "..newName) return end end
   for _,wp in ipairs(list) do
     if wp.n:lower()==oldName:lower() then
       wp.n=newName
@@ -708,7 +708,7 @@ end
 function TabRenameRoute(oldName,newName,tab)
   local list=(tab==0) and PersonalRoutes or (OrgData[OrgNames[tab]] and OrgData[OrgNames[tab]].routes)
   if not list then return end
-  for _,v in ipairs(list) do if v.n:lower()==newName:lower() then SetStatus("Name exists: "..newName) return end end
+  for _,v in ipairs(list) do if v.n:lower()==newName:lower() and v.n:lower()~=oldName:lower() then SetStatus("Name exists: "..newName) return end end
   for _,r in ipairs(list) do
     if r.n:lower()==oldName:lower() then
       r.n=newName

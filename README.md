@@ -6,7 +6,7 @@ A waypoint and route navigation system for **Dual Universe** built on Programmin
 
 ## What's new in v2.3.1
 
-- **Rename on the no-screen PB** — `rename OLD NAME > NEW NAME` for waypoints and `renameroute OLD NAME > NEW NAME` for routes. Coords, locks, and stops are kept.
+- **Rename on the no-screen PB** — `rename OLD NAME > NEW NAME` for waypoints and `renameroute OLD NAME > NEW NAME` for routes. Coords, locks, and stops are kept. Renaming to change only the capitalization (e.g. `home` → `Home`) now works on every PB.
 - **"Navigator" widget** — both ship PBs show a widget titled Navigator so it's clear what's running. Untick the `NavWidget` parameter to keep the board's default widget (it shows your own PB name).
 - **`nhelp` everywhere** — every PB's startup line and messages now point to `nhelp`, and the base PBs accept it too (plain `help` still works on bases).
 - **Flight-script databank detection** — the optional 2nd databank is recognized from more flight scripts' data, not just Arch HUD and Saga. You can also rename it to include "flight" so it's picked up right away. The startup line now reads `[NAV] Flight-script bank=OK`.

@@ -1096,7 +1096,7 @@ function DelWP(name)
 end
 
 function RenameWP(old,new_)
-  for _,v in ipairs(WaypointList) do if v.n:lower()==new_:lower() then SetStatus("Name exists: "..new_) return end end
+  for _,v in ipairs(WaypointList) do if v.n:lower()==new_:lower() and v.n:lower()~=old:lower() then SetStatus("Name exists: "..new_) return end end
   for _,wp in ipairs(WaypointList) do
     if wp.n:lower()==old:lower() then
       wp.n=new_; if SelWP==old then SelWP=new_ end
@@ -1143,7 +1143,7 @@ function DelRoute(name)
 end
 
 function RenameRoute(old,new_)
-  for _,v in ipairs(RouteList) do if v.n:lower()==new_:lower() then SetStatus("Name exists: "..new_) return end end
+  for _,v in ipairs(RouteList) do if v.n:lower()==new_:lower() and v.n:lower()~=old:lower() then SetStatus("Name exists: "..new_) return end end
   for _,r in ipairs(RouteList) do
     if r.n:lower()==old:lower() then
       r.n=new_; if SelRoute==old then SelRoute=new_ end
