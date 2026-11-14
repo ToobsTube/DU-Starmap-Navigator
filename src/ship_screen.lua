@@ -2182,7 +2182,7 @@ PushQueueIdx=PushQueueIdx+1
 
 
 --[[@
-slot=2
+slot=*
 event=onReceived(channel,message)
 args=*,*
 ]]

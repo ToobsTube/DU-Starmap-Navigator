@@ -1584,7 +1584,7 @@ PushState()
 
 
 --[[@
-slot=2
+slot=*
 event=onReceived(channel,message)
 args=*,*
 ]]

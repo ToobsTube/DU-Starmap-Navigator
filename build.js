@@ -103,6 +103,35 @@ function buildHandler(handler, slotNames) {
   return { code: fullCode, filter: buildFilter(meta), key };
 }
 
+// `slot=*` handlers: DU binds each handler to ONE slot, but auto-detect lets
+// the receiver sit in any of them. So a `slot=*` handler is attached to all
+// ten slots (0-9). To keep the PB small, its code is emitted once, as a global
+// function defined at the top of the onStart handler, and each per-slot
+// handler is a one-line call to it. Handlers on slots whose element doesn't
+// fire that event are simply never called.
+function expandAnySlot(rawHandlers) {
+  const out = [];
+  const defs = [];
+  let n = 0;
+  for (const h of rawHandlers) {
+    if (h.meta.slot !== '*') { out.push(h); continue; }
+    const event  = h.meta.event || '';
+    const params = (event.match(/\(([^)]*)\)/) || [, ''])[1];
+    const fn     = `__AnySlot${n++}`;
+    defs.push(`function ${fn}(${params})\n${h.code}\nend`);
+    for (let s = 0; s <= 9; s++) {
+      out.push({ meta: { ...h.meta, slot: String(s) }, code: `${fn}(${params})` });
+    }
+  }
+  if (defs.length) {
+    const start = out.find(h => (h.meta.slot || '-1') === '-1' &&
+                                (h.meta.event || 'onStart()') === 'onStart()');
+    if (!start) throw new Error('slot=* handler needs an onStart() handler to hold its function');
+    start.code = defs.join('\n') + '\n' + start.code;
+  }
+  return out.map((h, i) => ({ ...h, key: String(i) }));
+}
+
 function build(sourceName, config) {
   const srcPath = path.join('src', sourceName + '.lua');
   const outPath = path.join('dist', config.output);
@@ -118,7 +147,7 @@ function build(sourceName, config) {
     return;
   }
 
-  const rawHandlers = parseHandlers(lua);
+  const rawHandlers = expandAnySlot(parseHandlers(lua));
   const duHandlers  = rawHandlers.map(h => buildHandler(h, config.slots));
 
   const slots = {};
