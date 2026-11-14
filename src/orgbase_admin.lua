@@ -361,11 +361,17 @@ function SaveData()
 end
 
 -- ── WP management ────────────────────────────────────────────
-function MergeWP(name,posStr)
+-- h = parking heading from the ship (Helmsman). A new spot brings its own
+-- heading (or none); the same spot only changes heading when one is sent.
+function MergeWP(name,posStr,h)
+  h=tonumber(h)
   for _,wp in ipairs(WaypointList) do
-    if wp.n:lower()==name:lower() then wp.c=posStr; SaveData(); return end
+    if wp.n:lower()==name:lower() then
+      if h or wp.c~=posStr then wp.h=h end
+      wp.c=posStr; SaveData(); return
+    end
   end
-  table.insert(WaypointList,{n=name,c=posStr})
+  table.insert(WaypointList,{n=name,c=posStr,h=h})
   table.sort(WaypointList,function(a,b) return a.n:lower()<b.n:lower() end)
   SaveData()
 end
@@ -1369,7 +1375,7 @@ elseif cmd=="cmd" then
     if idx>=1 and idx<=nwp then
       local item=PendingWPs[idx]
       if item and item.data and item.data.n and item.data.c then
-        MergeWP(item.data.n, item.data.c); SetStatus("Approved WP: "..item.data.n)
+        MergeWP(item.data.n, item.data.c, item.data.h); SetStatus("Approved WP: "..item.data.n)
       end
       table.remove(PendingWPs, idx)
     elseif idx>nwp then
@@ -1403,7 +1409,7 @@ elseif cmd=="cmd" then
     LoadPending()
     local count=0
     for _,item in ipairs(PendingWPs) do
-      if item.data and item.data.n and item.data.c then MergeWP(item.data.n, item.data.c); count=count+1 end
+      if item.data and item.data.n and item.data.c then MergeWP(item.data.n, item.data.c, item.data.h); count=count+1 end
     end
     for _,item in ipairs(PendingRoutes) do
       if item.data and item.data.n then MergeRoute(item.data); count=count+1 end
@@ -1474,7 +1480,7 @@ if message:find("<PushWP>",1,true) then
   local raw=message:gsub("<PushWP>",""):gsub("@@@",'"')
   local ok,wp=pcall(json.decode,raw)
   if ok and wp and wp.n and wp.c then
-    MergeWP(wp.n,wp.c); SetStatus("Received WP: "..wp.n); DrawScreen()
+    MergeWP(wp.n,wp.c,wp.h); SetStatus("Received WP: "..wp.n); DrawScreen()
   end
 end
 

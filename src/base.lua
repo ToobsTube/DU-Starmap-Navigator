@@ -1071,11 +1071,17 @@ function StartNextOrgPull()
 end
 
 -- ── WP management ────────────────────────────────────────────
-function MergeWP(name,posStr)
+-- h = parking heading from the ship (Helmsman). A new spot brings its own
+-- heading (or none); the same spot only changes heading when one is sent.
+function MergeWP(name,posStr,h)
+  h=tonumber(h)
   for _,wp in ipairs(WaypointList) do
-    if wp.n:lower()==name:lower() then wp.c=posStr; SaveData(); return end
+    if wp.n:lower()==name:lower() then
+      if h or wp.c~=posStr then wp.h=h end
+      wp.c=posStr; SaveData(); return
+    end
   end
-  table.insert(WaypointList,{n=name,c=posStr})
+  table.insert(WaypointList,{n=name,c=posStr,h=h})
   table.sort(WaypointList,function(a,b) return a.n:lower()<b.n:lower() end)
   SaveData()
 end
@@ -1188,7 +1194,7 @@ function StartSend(requester)
   LoadData()
   SendQueue={}
   for _,wp in ipairs(WaypointList) do
-    table.insert(SendQueue,{type="wp",data={n=wp.n,c=wp.c}})
+    table.insert(SendQueue,{type="wp",data={n=wp.n,c=wp.c,h=wp.h}})
   end
   for _,r in ipairs(RouteList) do
     table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}})
@@ -1205,7 +1211,7 @@ function StartSend(requester)
     if od and od.channel~="" and (#od.wps>0 or #od.routes>0) then
       table.insert(SendQueue,{type="org_hdr",msg="<OrgSyncStart>"..org.."|ch:"..od.channel})
       for _,wp in ipairs(od.wps) do
-        table.insert(SendQueue,{type="wp",data={n=wp.n,c=wp.c}})
+        table.insert(SendQueue,{type="wp",data={n=wp.n,c=wp.c,h=wp.h}})
       end
       for _,r in ipairs(od.routes) do
         table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}})
@@ -1668,10 +1674,10 @@ if message:find("<PushWP>",1,true) then
     if PushOrgName and OrgData[PushOrgName] then
       local list=OrgData[PushOrgName].wps
       local found=false
-      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then e.c=wp.c;found=true;break end end
-      if not found then table.insert(list,{n=wp.n,c=wp.c}) end
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if wp.h~=nil or e.c~=wp.c then e.h=tonumber(wp.h) end e.c=wp.c;found=true;break end end
+      if not found then table.insert(list,{n=wp.n,c=wp.c,h=tonumber(wp.h)}) end
     else
-      MergeWP(wp.n,wp.c)
+      MergeWP(wp.n,wp.c,wp.h)
     end
     SetStatus("Received WP: "..wp.n); PushState()
   end

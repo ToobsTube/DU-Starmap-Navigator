@@ -237,7 +237,7 @@ function StartSend(requester, targetChannel)
   local ch=targetChannel or OrgChannel
   SendQueue={}
   for _,wp in ipairs(WaypointList) do
-    table.insert(SendQueue,{type="wp",   data={n=wp.n,c=wp.c}, ch=ch})
+    table.insert(SendQueue,{type="wp",   data={n=wp.n,c=wp.c,h=wp.h}, ch=ch})
   end
   for _,r in ipairs(RouteList) do
     table.insert(SendQueue,{type="route",data={n=r.n,pts=r.pts}, ch=ch})

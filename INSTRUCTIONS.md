@@ -98,6 +98,7 @@ The order you link everything else in (Screen, Receiver, Emitter) doesn't matter
 | `CalcBrake` | `0` | Your ship's total brake force in kN from your ship's stats screen. When set, the script decelerates using brakes rather than a flip-and-burn. Leave at `0` to let the script read brake force automatically from the construct; if that also fails it falls back to using thrust for deceleration. |
 | `CalcAccel` | `5` | Fallback acceleration in m/s² — only used if `CalcThrust` is `0`. |
 | `AccentR/G/B` | `0 / 200 / 255` | Starting accent color (RGB 0–255). The in-game Theme Editor overrides this once you save a theme. |
+| `ParkHeading` | `true` (ticked) | Saves which way the ship is facing when you mark a waypoint where you are, and sends it with the destination so a flight script that supports it (Helmsman) can park facing that way. Shown in the waypoint list as ↑ 32°. Untick it to turn parking headings off: nothing is saved, sent or shown. |
 | `NavWidget` | `true` (ticked) | Replaces the board's default widget with one titled **Navigator**, so it's clear what's running. Untick it if you've renamed the PB in-game and want the default widget (which shows your PB's name) instead. |
 
 #### No Screen version only
@@ -249,7 +250,12 @@ Click **SETTINGS** in the footer. The panel shows the version, ship ID, base cha
 | PUSH TO ORG | Sends waypoints to the org on the active tab *(org tab only)* |
 | FIRST ORG SYNC | Shows a hint — type `firstsync CHANNEL` in Lua chat to add a new org |
 | THEME | Opens the Theme Editor color picker |
+| HELP | Shows what the buttons do and the most-used chat commands, right on the screen |
 | BACK | Returns to the navigation panel |
+
+> **Starting the ship PB with a switch?** Everything on the screen works, and so do chat commands and the buttons that ask for input in chat (NEW ROUTE, RENAME, SET COORDS, FIRST ORG SYNC). What you won't see is anything the board prints to the Lua console: its start-up messages, `nhelp`, `list`, `routes`, and `status`. The Navigator widget won't appear either. Use the HELP panel for help, or start the PB by hand when you need console output.
+>
+> PRINT COORDS is the exception if you have a flight-script databank linked: Navigator also writes the coordinates there as `nav_print` (`NAME|::pos{...}`), and a flight script that reads that key prints them to your console from the seat.
 
 ### Map marker
 When you navigate to a waypoint, route stop, or body, Navigator sets it as your DU map destination once. After that it leaves the map alone, so you can set your own destination at any time without clearing nav. Click NAV / NEXT STOP again to put Navigator's target back on the map.
@@ -273,6 +279,8 @@ Type these in Lua chat while the PB is running. Most editing actions can also be
 | `add NAME` | Add a waypoint at your current position |
 | `rename NEWNAME` | Rename the selected WP, route, or stop |
 | `setpos ::pos{...}` | Update coords of the selected WP or stop |
+| `heading` | Show which way the ship is facing now (0 = north, 90 = east) |
+| `heading 45` | Set the selected waypoint's parking heading. Also `heading here` (the way you're facing now), `heading clear`, or `heading NAME > 45` |
 | `del` | Delete the selected WP, route, or stop |
 | `newroute NAME` | Create a new route |
 | `addstop WAYPOINT NAME` | Add a saved waypoint as the last stop on the selected route |
@@ -371,10 +379,12 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 ### Chat Commands (no screen version)
 | Command | Description |
 |---------|-------------|
-| `add NAME` | Add a waypoint at your current position |
-| `add NAME ::pos{...}` | Add or update a waypoint with specific coords |
+| `add NAME` | Add a waypoint at your current position. If NAME already exists, that waypoint moves to where you are now |
+| `add NAME ::pos{...}` | Add a waypoint at those coords. If NAME already exists, its coords are replaced |
 | `del NAME` | Delete a waypoint by name |
 | `rename OLD NAME > NEW NAME` | Rename a waypoint (keeps its coords and lock) |
+| `heading` | Show which way the ship is facing now (0 = north, 90 = east) |
+| `heading NAME > 45` | Set a waypoint's parking heading. Also `heading NAME > here` (the way you're facing now) or `heading NAME > clear` |
 | `newroute NAME` | Create a new route |
 | `renameroute OLD NAME > NEW NAME` | Rename a route (keeps its stops) |
 | `addstop ROUTE > WAYPOINT NAME` | Add a saved waypoint as the last stop on a route |
@@ -463,6 +473,19 @@ You will see these messages in Lua chat:
 - `[NAV] Flight-script bank=OK` — on PB start
 - `[NAV] sent to HUD bank: NAME` — each time a waypoint is sent
 - `[NAV] Target: NAME` — from Saga confirming it received the target
+
+---
+
+## Parking headings
+
+A waypoint can remember which way the ship should face when it gets there, so a flight script that supports it can land or hover facing that way. Arch HUD and Saga ignore it.
+
+- **Saving:** when you mark a waypoint where you are (MARK WP, Mark WP Here, or `add NAME` without coords) while near a planet, Navigator saves the way your ship is facing. The status line shows `Saved WP: NAME (facing 32°)`. 0° is north (toward the planet's north pole) and 90° is east. Nothing is saved in space, at a pole, or with the nose pointing straight up or down.
+- **Showing:** waypoints with a heading show it in the list, for example `↑ 32°`.
+- **Changing:** use `heading` in chat (see the chat command tables). `heading` on its own tells you which way you're facing now.
+- **Sending:** when you navigate to the waypoint (or to a route stop added from it), the destination sent to the flight-script databank becomes `NAME|::pos{...}|hdg=32.0`.
+- **Sharing:** headings travel with waypoints when you push them to a base and sync them to other ships.
+- **Turning it off:** untick the `ParkHeading` parameter on the ship PB.
 
 ---
 

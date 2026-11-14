@@ -108,7 +108,7 @@ HELM_WORDS={["help"]=true,["?"]=true,ap=true,go=true,stop=true,clear=true,hud=tr
   settings=true,links=true,target=true,speed=true,stopdist=true,brakes=true,engines=true,tags=true,
   fuel=true,fuelinfo=true,fueltalents=true,landsafety=true,park=true,fhud=true,autolevel=true,
   farside=true,ahead=true,navinfo=true,["goto"]=true,["/goto"]=true,radar=true,mode=true,
-  flight=true,maneuver=true,thrust=true,chat=true}
+  flight=true,maneuver=true,thrust=true,chat=true,hdg=true,agg=true}
 
 -- Clear the DU map destination. setWaypoint("") makes DU print "Invalid destination:",
 -- so use clearWaypoint when the API has it, otherwise leave the marker alone.
@@ -474,8 +474,12 @@ do
       -- gets written to the navdatabank side anyway.)
       local ok,list=pcall(function() return d.getKeyList() end)
       if ok and type(list)=="table" then
+        -- Key-list membership also counts: Helmsman's sf_* settings and the
+        -- nav_*_dest / nav_print keys stay listed even when cleared to "".
+        local navOnly={nav_ap_dest=1,nav_arch_dest=1,nav_saga_dest=1,nav_print=1}
         for _,k in ipairs(list) do
-          if tostring(k):lower():find("auto") then return true end
+          local ks=tostring(k)
+          if ks:lower():find("auto") or ks:sub(1,3)=="sf_" or navOnly[ks] then return true end
         end
       end
       return false
@@ -541,6 +545,7 @@ CalcAccel   =5        --export: Time Calc fallback acceleration in m/s2 — igno
 AccentR=0    --export: Screen accent color Red 0-255 (default 0)
 AccentG=200  --export: Screen accent color Green 0-255 (default 200)
 AccentB=255  --export: Screen accent color Blue 0-255 (default 255)
+ParkHeading=true --export: Save which way the ship faces with waypoints marked where you are, and send it to a flight script that can park facing that way (Helmsman). Untick to turn parking headings off.
 NavWidget=true --export: Show a "Navigator" widget in place of the board's default one. Untick to keep the default widget (shows your own PB name).
 
 -- Runtime state
@@ -577,6 +582,7 @@ PendingTarget   = ""   -- context for pending action
 ShowThemePicker = false
 ShowFirstSync   = false
 ShowSettings    = false
+ShowHelp        = false  -- on-screen help (chat may not reach a switch-started board)
 PickStops       = false   -- ADD STOP pick mode: clicking a WP appends it to SelRoute
 ThemeSlots      = nil   -- loaded on init
 Palette         = nil   -- derived from ThemeSlots
@@ -638,15 +644,21 @@ function GetTabOrgChannel()
 end
 
 -- ── WP management ────────────────────────────────────────────
-function TabAddWP(name,posStr,tab)
+-- here=true: posStr is where the ship is now, so h (maybe nil) replaces the heading.
+function TabAddWP(name,posStr,tab,here,h)
   local list=(tab==0) and PersonalWPs or (OrgData[OrgNames[tab]] and OrgData[OrgNames[tab]].wps)
   if not list then SetStatus("Invalid tab") return false end
   for _,wp in ipairs(list) do
-    if wp.n:lower()==name:lower() then wp.c=posStr; SaveData(); SetStatus("Updated: "..name); return true end
+    if wp.n:lower()==name:lower() then
+      wp.c=posStr
+      if here then wp.h=h end
+      if NavTarget and NavTarget.t=="wp" and NavTarget.n:lower()==name:lower() then NavTarget.c=posStr; UpdateWaypoint() end
+      SaveData(); SetStatus("Updated: "..wp.n); return true
+    end
   end
-  table.insert(list,{n=name,c=posStr})
+  table.insert(list,{n=name,c=posStr,h=here and h or nil})
   table.sort(list,function(a,b) return a.n:lower()<b.n:lower() end)
-  SaveData(); SetStatus("Saved WP: "..name); return true
+  SaveData(); SetStatus("Saved WP: "..name..((here and h) and string.format("  (facing %.0f°)",h) or "")); return true
 end
 
 function TabDelWP(name,tab)
@@ -725,7 +737,7 @@ end
 function ResolveStopCoords(arg,wps)
   if ParsePos(arg) then return arg,arg end
   for _,wp in ipairs(wps) do
-    if wp.n:lower()==arg:lower() then return wp.c,wp.n end
+    if wp.n:lower()==arg:lower() then return wp.c,wp.n,wp.h end
   end
   return nil,nil
 end
@@ -736,9 +748,9 @@ function AddStop(routeName,arg,tab)
   if not routes then return end
   for _,r in ipairs(routes) do
     if r.n:lower()==routeName:lower() then
-      local c,lbl=ResolveStopCoords(arg,wps)
+      local c,lbl,sh=ResolveStopCoords(arg,wps)
       if not c then SetStatus("Not a WP name or ::pos{}") return end
-      table.insert(r.pts,{c=c,label=lbl})
+      table.insert(r.pts,{c=c,label=lbl,h=sh})
       if SelRoute:lower()==r.n:lower() then SelStop=#r.pts end  -- show the new stop
       SaveData(); SetStatus("Stop "..#r.pts.." added to "..r.n..(PickStops and "  —  click more, or DONE ADDING" or "  —  ADD STOP again for the next one"),8)
       return #r.pts
@@ -793,6 +805,77 @@ function GetCurrentPosStr()
   local p=GetCurrentPos(); if not p then return nil end
   return string.format("::pos{0,0,%.4f,%.4f,%.4f}",p.x,p.y,p.z)
 end
+-- ── Parking heading (Helmsman reads nav_ap_dest NAME|::pos{..}|hdg=N) ──
+-- Compass degrees the nose points: 0 = north (toward the planet's +Z pole),
+-- 90 = east. "Up" comes from the atlas planet centre, not gravity (an AGG
+-- upsets the gravity reading). nil with no planet within 2 SU of the
+-- surface, nose straight up/down, or at a pole. Matches Helmsman's "hdg".
+function ShipHeading()
+  if not Atlas then return nil end
+  local p=construct.getWorldPosition(); local f=construct.getWorldOrientationForward()
+  if not p or not f then return nil end
+  local u,best
+  for _,sys in pairs(Atlas) do for _,b in pairs(sys) do
+    if type(b)=="table" and b.center and b.radius then
+      local dx,dy,dz=p[1]-b.center[1],p[2]-b.center[2],p[3]-b.center[3]
+      local d=math.sqrt(dx*dx+dy*dy+dz*dz); local alt=d-b.radius
+      if d>0 and alt<400000 and (not best or alt<best) then best=alt; u={dx/d,dy/d,dz/d} end
+    end
+  end end
+  if not u then return nil end
+  local nx,ny,nz=-u[3]*u[1],-u[3]*u[2],1-u[3]*u[3]          -- Z minus its "up" part
+  local k=f[1]*u[1]+f[2]*u[2]+f[3]*u[3]
+  local fx,fy,fz=f[1]-k*u[1],f[2]-k*u[2],f[3]-k*u[3]       -- forward minus its "up" part
+  local nl=math.sqrt(nx*nx+ny*ny+nz*nz); local fl=math.sqrt(fx*fx+fy*fy+fz*fz)
+  if nl<0.05 or fl<0.05 then return nil end
+  nx,ny,nz=nx/nl,ny/nl,nz/nl; fx,fy,fz=fx/fl,fy/fl,fz/fl
+  local ex,ey,ez=ny*u[3]-nz*u[2],nz*u[1]-nx*u[3],nx*u[2]-ny*u[1]   -- east = north x up
+  return math.deg(math.atan(fx*ex+fy*ey+fz*ez,fx*nx+fy*ny+fz*nz))%360
+end
+-- Heading to save with a WP marked where the ship is (nil when off or unusable).
+function HdgCapture()
+  if not ParkHeading then return nil end
+  local ok,h=pcall(ShipHeading)
+  if not ok or not h then return nil end
+  return (math.floor(h*10+0.5)/10)%360
+end
+function HdgSuffix(h)
+  h=tonumber(h)
+  return (ParkHeading and h) and string.format("|hdg=%.1f",h) or ""
+end
+-- Sync/push merge: a new spot brings its own heading (or none); the same spot
+-- only changes heading when the sender has one.
+function MergeHdg(e,wp)
+  if wp.h~=nil or e.c~=wp.c then e.h=tonumber(wp.h) end
+end
+-- "heading NAME > N|here|clear" (also the screen's selected-WP form)
+function SetWPHeading(list,name,arg)
+  if not ParkHeading then SetStatus("Parking headings are off (ParkHeading export)") return end
+  local wp
+  for _,v in ipairs(list or {}) do if v.n:lower()==name:lower() then wp=v break end end
+  if not wp then SetStatus("WP not found: "..name) return end
+  arg=Trim(arg or ""):lower():gsub("°","")
+  local h
+  if arg=="clear" or arg=="off" or arg=="none" then h=nil
+  elseif arg=="here" then
+    h=HdgCapture()
+    if not h then SetStatus("No heading here (no planet nearby, nose up/down, or at a pole)") return end
+  else
+    h=tonumber(arg)
+    if not h then SetStatus("Usage: heading NAME > N (0-360), here, or clear") return end
+    h=(math.floor(h*10+0.5)/10)%360
+  end
+  wp.h=h
+  if NavTarget and NavTarget.t=="wp" and NavTarget.n:lower()==wp.n:lower() then NavTarget.h=h end
+  SaveData()
+  SetStatus(h and string.format("%s parks facing %.0f°",wp.n,h) or (wp.n..": no parking heading"))
+end
+-- "heading" alone: report which way the nose points now
+function ReportHeading()
+  local ok,h=pcall(ShipHeading)
+  local msg=(ok and h) and string.format("Facing %.0f° (0 = north, 90 = east)",h) or "No heading here (no planet nearby, nose up/down, or at a pole)"
+  system.print("[NAV] "..msg); SetStatus(msg)
+end
 -- Put the nav target on the DU map. Called when the target is chosen or changes.
 function UpdateWaypoint()
   if NavTarget and NavTarget.c and NavTarget.c~="" then
@@ -808,7 +891,22 @@ function ClearWaypoint()
   NavTarget=nil; LastMapWP=nil; ClearMapWaypoint(); SaveData()
 end
 
-function SendAutopilot(name, coords)
+-- ::pos{} of an atlas body's centre by its (English) name, or nil.
+function AtlasBodyPos(name)
+  if not Atlas or not name then return nil end
+  for _,sys in pairs(Atlas) do
+    for _,body in pairs(sys) do
+      local nm=type(body.name)=="table" and body.name[1] or body.name
+      if nm==name and body.center then
+        local c=body.center
+        return string.format("::pos{0,0,%.4f,%.4f,%.4f}",c[1],c[2],c[3])
+      end
+    end
+  end
+  return nil
+end
+
+function SendAutopilot(name, coords, hdg)
   if not coords or coords=="" then return end
   -- HUD databank integration: write to shared databank (slot 4, optional)
   -- Arch HUD reads nav_arch_dest; Saga HUD reads nav_saga_dest;
@@ -817,7 +915,7 @@ function SendAutopilot(name, coords)
     local dest = (name or "Navigator").."|"..coords
     navdatabank.setStringValue("nav_arch_dest", dest)
     navdatabank.setStringValue("nav_saga_dest", dest)
-    navdatabank.setStringValue("nav_ap_dest", dest)
+    navdatabank.setStringValue("nav_ap_dest", dest..HdgSuffix(hdg))  -- only Helmsman reads |hdg=
     navdatabank.setStringValue("autofly", AutoFly and "1" or "0")
     system.print("[NAV] sent to HUD bank: "..(name or "Navigator"))
   end
@@ -829,7 +927,7 @@ function SetNavWP(name,tab)
     if wp.n:lower()==name:lower() then
       NavTarget={t="wp",n=wp.n,c=wp.c,tab=tab}
       SaveData(); UpdateWaypoint()
-      SendAutopilot(wp.n, wp.c)
+      SendAutopilot(wp.n, wp.c, wp.h)
       SetStatus("Navigating: "..wp.n)
       return true
     end
@@ -846,7 +944,7 @@ function SetNavRoute(name,tab,startStop)
       NavTarget={t="route",n=r.n,c=r.pts[idx].c,tab=tab,stopIdx=idx,stopTotal=#r.pts}
       SaveData(); UpdateWaypoint()
       local stopLabel=r.n.." stop "..idx.."/"..#r.pts
-      SendAutopilot(stopLabel, r.pts[idx].c)
+      SendAutopilot(stopLabel, r.pts[idx].c, r.pts[idx].h)
       SetStatus("Route: "..stopLabel)
       return true
     end
@@ -864,7 +962,7 @@ function NextStop()
       NavTarget.stopIdx=idx; NavTarget.c=r.pts[idx].c; NavTarget.stopTotal=#r.pts
       SaveData(); UpdateWaypoint()
       local stopLabel=r.n.." stop "..idx.."/"..#r.pts
-      SendAutopilot(stopLabel, r.pts[idx].c)
+      SendAutopilot(stopLabel, r.pts[idx].c, r.pts[idx].h)
       SetStatus("Stop "..idx.."/"..#r.pts.."  "..(r.pts[idx].label or r.pts[idx].c:sub(1,30))); return
     end
   end
@@ -880,7 +978,7 @@ function PrevStop()
       NavTarget.stopIdx=idx; NavTarget.c=r.pts[idx].c; NavTarget.stopTotal=#r.pts
       SaveData(); UpdateWaypoint()
       local stopLabel=r.n.." stop "..idx.."/"..#r.pts
-      SendAutopilot(stopLabel, r.pts[idx].c)
+      SendAutopilot(stopLabel, r.pts[idx].c, r.pts[idx].h)
       SetStatus("Stop "..idx.."/"..#r.pts.."  "..(r.pts[idx].label or r.pts[idx].c:sub(1,30))); return
     end
   end
@@ -914,7 +1012,7 @@ function PushToChannel(ch,wps,routes)
   if not emitter then SetStatus("No emitter") return end
   PushQueue={}
   for _,wp in ipairs(wps) do
-    if not wp.lk then table.insert(PushQueue,{type="wp",  data={n=wp.n,c=wp.c}}) end
+    if not wp.lk then table.insert(PushQueue,{type="wp",  data={n=wp.n,c=wp.c,h=wp.h}}) end
   end
   for _,r in ipairs(routes) do
     table.insert(PushQueue,{type="route",data={n=r.n,pts=r.pts}})
@@ -962,7 +1060,7 @@ function MarkWP()
   local p=GetCurrentPosStr()
   if not p then SetStatus("No position — is construct linked?") return end
   local wps=GetTabWPs()
-  TabAddWP(AutoName("WP",wps),p,ActiveTab)
+  TabAddWP(AutoName("WP",wps),p,ActiveTab,true,HdgCapture())
 end
 
 function MarkRouteStop()
@@ -1052,11 +1150,8 @@ function BuildScreenScript()
     local t={}
     for _,v in ipairs(list) do
       if v.n and v.c then
-        if v.lk then
-          table.insert(t, string.format("{n=%q,c=%q,lk=true}", v.n, v.c))
-        else
-          table.insert(t, string.format("{n=%q,c=%q}", v.n, v.c))
-        end
+        local hs=(ParkHeading and tonumber(v.h)) and string.format(",h=%.0f",v.h) or ""
+        table.insert(t, string.format("{n=%q,c=%q%s%s}", v.n, v.c, v.lk and ",lk=true" or "", hs))
       elseif type(v)=="string" then
         table.insert(t, string.format("%q", v))
       end
@@ -1141,6 +1236,7 @@ local ORG_CHANNELS=%s
 local ShowFirstSync=%s
 local AutoFly=%s
 local ShowSettings=%s
+local ShowHelp=%s
 local PickStops=%s
 local VER=%q local BaseCh=%q local ShipId=%q
 ]],
@@ -1163,7 +1259,7 @@ local VER=%q local BaseCh=%q local ShipId=%q
     nName,nDist,nTime,nCoord,nType,nStop,nTotal,
     StatusMsg,ActiveTab,atlasTabIdx,AtlasSearch,wpLit,rtLit,ptLit,tnLit,atLit,
     orgChLit,tostring(ShowFirstSync),tostring(AutoFly),
-    tostring(ShowSettings),tostring(PickStops and SelRoute~=""),VERSION,BaseChannel or "",ShipID or "")
+    tostring(ShowSettings),tostring(ShowHelp),tostring(PickStops and SelRoute~=""),VERSION,BaseChannel or "",ShipID or "")
 
   S[2]=[[
 local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
@@ -1348,6 +1444,10 @@ else
       setNextFillColor(Lh,Ar,Ag,Ab,0.9) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
       addText(Lh,fS,"LK",lkX+lkW/2,ry+C/2)
     end
+    if wp.h then
+      setNextFillColor(Lh,Ar,Ag,Ab,0.75) setNextTextAlign(Lh,AlignH_Right,AlignV_Middle)
+      addText(Lh,fS,"\u{2191} "..wp.h.."\u{00B0}",lkX-4,ry+C/2)
+    end
     setNextStrokeColor(Ll,Lnr,Lng,Lnb,0.20) addLine(Ll,wpX,ry+C,wpX+wpW,ry+C)
     if hv and pr then
       if PickStops then Out=json.encode({"pickstop",wp.n})
@@ -1437,7 +1537,45 @@ end
 ]]
 
   S[7]=[[
-if ShowSettings then
+if ShowHelp then
+-- HELP PANEL (replaces the nav panel while open). Lines starting with # are headings.
+PH(nvX,nvW,PHr,PHg,PHb)
+setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
+addText(Lh,fH,"HELP",nvX+nvW/2,CON_Y+C/2)
+addLine(Ll,nvX,CON_Y+C,nvX+nvW,CON_Y+C)
+local HELP={
+"#ON-SCREEN BUTTONS",
+"MARK WP  save where you are as a waypoint",
+"ADD STOP  click waypoints in order, then DONE",
+"NAV WP / NAV ROUTE  set your destination",
+"NEXT STOP  go to the next stop on a route",
+"AUTO FLY  advance route stops automatically",
+"SETTINGS  sync, push, org sync, theme",
+"#CHAT COMMANDS (Lua chat)",
+"nhelp  full command list in the console",
+"add NAME  save your position as a waypoint",
+"rename NAME  rename the selected item",
+"addstop A; B; C  add stops to the route",
+"sync / push  share waypoints with your base",
+"#STARTED BY A SWITCH?",
+"Chat commands still work, but the console",
+"won't show what this board prints, such as",
+"nhelp, list or status. Start the board by",
+"hand to see those. PRINT COORDS still works",
+"if your flight script relays it."}
+local hy=CON_Y+C+8
+for _,l in ipairs(HELP) do
+  if l:sub(1,1)=="#" then
+    hy=hy+4
+    setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Left,AlignV_Top)
+    addText(Lh,fS,l:sub(2),nvX+6,hy) hy=hy+17
+  else
+    setNextFillColor(Lt,Txr,Txg,Txb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Top)
+    addText(Lt,fS,l,nvX+6,hy) hy=hy+15
+  end
+end
+if Btn("BACK",nvX+5,SH-32-30,nvW-10,26,true) then Out=json.encode({"help_close"}) end
+elseif ShowSettings then
 -- SETTINGS PANEL (replaces the nav panel while open)
 PH(nvX,nvW,PHr,PHg,PHb)
 setNextFillColor(Lh,Ar,Ag,Ab,1) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
@@ -1459,13 +1597,14 @@ SR("SHIP ID",ShipId~="" and ShipId or "---")
 SR("BASE CHANNEL",BaseCh~="" and BaseCh or "---")
 SR("ORG CHANNEL",isOrgTab and (orgCh~="" and orgCh or "not set - use First Org Sync") or "select an org tab")
 local bX=nvX+5 local bW=nvW-10 local bH=26 local bG=4
-local by=SH-32-(bH+bG)*7-4
+local by=SH-32-(bH+bG)*8-4
 if Btn("SYNC FROM BASE",bX,by,bW,bH,true)     then Out=json.encode({"sync","base"}) end by=by+bH+bG
 if Btn("PUSH TO BASE",bX,by,bW,bH,true)       then Out=json.encode({"push","base"}) end by=by+bH+bG
 if Btn("SYNC FROM ORG",bX,by,bW,bH,isOrgTab)  then Out=json.encode({"sync","org"})  end by=by+bH+bG
 if Btn("PUSH TO ORG",bX,by,bW,bH,isOrgTab)    then Out=json.encode({"push","org"})  end by=by+bH+bG
 if Btn("FIRST ORG SYNC",bX,by,bW,bH,true)     then Out=json.encode({"firstsync_hint"}) end by=by+bH+bG
 if Btn("THEME",bX,by,bW,bH,true)              then Out=json.encode({"open_theme"}) end by=by+bH+bG
+if Btn("HELP",bX,by,bW,bH,true)               then Out=json.encode({"help_open"}) end by=by+bH+bG
 if Btn("BACK",bX,by,bW,bH,true)               then Out=json.encode({"settings_close"}) end
 else
 -- NAV PANEL
@@ -1548,8 +1687,9 @@ else
   setNextFillColor(Lb,BNfr,BNfg,BNfb,0.6) setNextStrokeColor(Lb,BNsr,BNsg,BNsb,0.6)
 end
 setNextStrokeWidth(Lb,1) addBoxRounded(Lb,thX,thY,thW,thH,3)
-setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,ShowSettings and "CLOSE" or "SETTINGS",thX+thW/2,thY+thH/2)
-if thHv and pr then Out=json.encode({ShowSettings and "settings_close" or "settings_open"}) end
+local panelOpen=ShowSettings or ShowHelp
+setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fS,panelOpen and "CLOSE" or "SETTINGS",thX+thW/2,thY+thH/2)
+if thHv and pr then Out=json.encode({panelOpen and "settings_close" or "settings_open"}) end
 -- Status / hint text
 if StatusMsg~="" then
   setNextFillColor(Lt,Str,Stg,Stb,1) setNextTextAlign(Lt,AlignH_Center,AlignV_Middle) addText(Lt,fT,StatusMsg,SW/2-40,SH-16)
@@ -2009,29 +2149,31 @@ elseif act=="selstop"   then SelStop=(SelStop==d[2] and 0 or d[2])
 elseif act=="nav_wp"    then SetNavWP(d[2],ActiveTab)
 elseif act=="nav_rt"    then SetNavRoute(d[2],ActiveTab,1)
 elseif act=="nav_atlas" then
-  if Atlas then
-    for _,sys in pairs(Atlas) do
-      for _,body in pairs(sys) do
-        local nm=type(body.name)=="table" and body.name[1] or body.name
-        if nm==d[2] and body.center then
-          local c=body.center
-          local pos=string.format("::pos{0,0,%.4f,%.4f,%.4f}",c[1],c[2],c[3])
-          NavTarget={t="wp",n=nm,c=pos}
-          SaveData(); UpdateWaypoint(); SendAutopilot(pos)
-          SetStatus("Navigating: "..nm)
-        end
-      end
-    end
+  local pos=AtlasBodyPos(d[2])
+  if pos then
+    NavTarget={t="wp",n=d[2],c=pos}
+    SaveData(); UpdateWaypoint(); SendAutopilot(d[2],pos)
+    SetStatus("Navigating: "..d[2])
   end
 elseif act=="print_coords" then
   local wname=d[2]
   if wname then
-    local wps=GetTabWPs()
-    for _,wp in ipairs(wps) do
-      if wp.n==wname then
-        system.print("[WP] "..wp.n)
-        system.print(wp.c)
-        break
+    -- Saved waypoint on this tab first; on the ATLAS tab it's a body name.
+    local coords
+    local hdg
+    for _,wp in ipairs(GetTabWPs()) do
+      if wp.n==wname then coords=wp.c; hdg=wp.h break end
+    end
+    coords=coords or AtlasBodyPos(wname)
+    if coords then
+      system.print("[WP] "..wname)
+      system.print(coords)
+      -- A switch-started board's prints never reach the player, so also hand
+      -- the coords to the seat's flight script via the shared databank.
+      -- Helmsman prints nav_print to the console and clears it.
+      if navdatabank then
+        navdatabank.setStringValue("nav_print", wname.."|"..coords..HdgSuffix(hdg))
+        SetStatus("Coords sent to console: "..wname)
       end
     end
   end
@@ -2110,7 +2252,9 @@ elseif act=="push"      then
     else SetStatus("No org tab selected") end
   end
 elseif act=="settings_open"  then ShowSettings=true
-elseif act=="settings_close" then ShowSettings=false
+elseif act=="settings_close" then ShowSettings=false; ShowHelp=false
+elseif act=="help_open"  then ShowHelp=true
+elseif act=="help_close" then ShowHelp=false  -- back to SETTINGS
 elseif act=="firstsync_hint" then SetStatus("Type: firstsync CHANNEL  (channel shown on org sync PB screen)",10)
 -- Theme picker actions
 elseif act=="open_theme"  then
@@ -2217,17 +2361,17 @@ if message:find("<SyncWP>",1,true) then
       EnsureOrg(SyncOrgName)
       local list=OrgData[SyncOrgName].wps
       local found=false
-      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
-      if not found then table.insert(list,{n=wp.n,c=wp.c}) end
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then MergeHdg(e,wp); e.c=wp.c end found=true;break end end
+      if not found then table.insert(list,{n=wp.n,c=wp.c,h=tonumber(wp.h)}) end
     elseif SyncContext~="personal" and OrgData[SyncContext] then
       local list=OrgData[SyncContext].wps
       local found=false
-      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
-      if not found then table.insert(list,{n=wp.n,c=wp.c}) end
+      for _,e in ipairs(list) do if e.n:lower()==wp.n:lower() then if not e.lk then MergeHdg(e,wp); e.c=wp.c end found=true;break end end
+      if not found then table.insert(list,{n=wp.n,c=wp.c,h=tonumber(wp.h)}) end
     else
       local found=false
-      for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
-      if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c}) end
+      for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then MergeHdg(e,wp); e.c=wp.c end found=true;break end end
+      if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c,h=tonumber(wp.h)}) end
     end
   end
 end
@@ -2292,8 +2436,8 @@ if message:find("<PushWP>",1,true) then
   local ok,wp=pcall(json.decode,raw)
   if ok and wp and wp.n and wp.c then
     local found=false
-    for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then e.c=wp.c end found=true;break end end
-    if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c}) end
+    for _,e in ipairs(PersonalWPs) do if e.n:lower()==wp.n:lower() then if not e.lk then MergeHdg(e,wp); e.c=wp.c end found=true;break end end
+    if not found then table.insert(PersonalWPs,{n=wp.n,c=wp.c,h=tonumber(wp.h)}) end
     SaveData()
   end
 end
@@ -2349,6 +2493,10 @@ if lo=="nhelp" or lo=="navhelp" then
   system.print("── Waypoints ─────────────────────────")
   system.print("add NAME           save current pos as WP")
   system.print("add NAME ::pos{..} save coords as WP")
+  system.print("  (using an existing WP name moves that WP to the new spot)")
+  system.print("heading            which way the ship faces now (0 = north, 90 = east)")
+  system.print("heading 45         selected WP's parking heading for Helmsman")
+  system.print("  (also: heading here, heading clear, heading NAME > 45)")
   system.print("del                delete selected WP")
   system.print("rename NEWNAME     rename selected WP or route")
   system.print("setpos ::pos{..}   update selected WP coords")
@@ -2398,6 +2546,17 @@ if lo=="nhelp" or lo=="navhelp" then
   return
 end
 
+-- heading / heading N|here|clear (selected WP) / heading NAME > N|here|clear
+if lo=="heading" then ReportHeading(); DrawScreen(); return end
+if lo:match("^heading%s") then
+  local hdN,hdA=t:match("^%S+%s+(.-)>(.*)$")
+  if not hdN then hdN=SelWP; hdA=t:match("^%S+%s+(.*)$") end
+  hdN=Trim(hdN or ""); hdA=Trim(hdA or "")
+  if hdN=="" or hdA=="" then SetStatus("Select a WP, then: heading N (0-360), here, or clear")
+  else SetWPHeading(GetTabWPs(),hdN,hdA) end
+  DrawScreen(); return
+end
+
 -- add NAME [coords]
 local addN,addC=t:match("^[Aa][Dd][Dd]%s+(.-)%s*(::pos%b{})")
 if not addN then addN=t:match("^[Aa][Dd][Dd]%s+(.+)") end  -- no coords = use current pos
@@ -2408,7 +2567,7 @@ if addN then
     else SetStatus("Bad coords. Use ::pos{0,0,x,y,z}") end
   else
     local p=GetCurrentPosStr()
-    if p then TabAddWP(addN,p,ActiveTab) else SetStatus("No position — core connected?") end
+    if p then TabAddWP(addN,p,ActiveTab,true,HdgCapture()) else SetStatus("No position — core connected?") end
   end
   DrawScreen(); return
 end
