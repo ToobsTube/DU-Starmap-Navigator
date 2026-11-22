@@ -1,4 +1,4 @@
-# DU Starmap Navigator v2.3.1 — Setup & User Guide
+# DU Starmap Navigator v2.3.2 — Setup & User Guide
 
 ## Overview
 

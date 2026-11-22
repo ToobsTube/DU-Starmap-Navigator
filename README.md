@@ -1,8 +1,19 @@
-# DU Starmap Navigator v2.3.1
+# DU Starmap Navigator v2.3.2
 
 A waypoint and route navigation system for **Dual Universe** built on Programming Boards. Save locations, build multi-stop routes, share waypoints with your org, and calculate realistic travel times — all from a screen UI or an AR HUD.
 
 ---
+
+## What's new in v2.3.2
+
+- **Parking headings** — when you mark a waypoint where you are near a planet, Navigator saves which way the ship is facing and sends it with the destination (`NAME|::pos{...}|hdg=32.0`), so a flight script that supports it can park facing that way. Set or change it with `heading` in chat; it shows in the list as `↑ 32°` and travels with push/sync. Untick `ParkHeading` to turn it off. Arch HUD and Saga ignore it.
+- **Delete needs a confirm** — on the screen version, DEL WP / DEL ROUTE / DEL STOP change to **CONFIRM**; click again within 5 seconds. In chat, `del`, `delstop`, and `delroute` must be typed twice. Locked waypoints must be unlocked first.
+- **LOCK / UNLOCK button** on the screen version, and `lock` / `unlock` on their own act on the selected waypoint.
+- **HELP panel (screen version)** — Settings → HELP shows the buttons and most-used chat commands on the screen, for boards started by a switch, where console output doesn't show.
+- **Time Calc (no screen)** — the selected row now highlights, and Alt → navigates to it. The list now includes org waypoints and personal/org routes, with one total time for the whole route.
+- **`add NAME` on an existing waypoint** (no screen) moves it to your position, or to the coords you give.
+
+Upgrading from v2.3.1: re-import the PBs you use, **including your base PBs** so parking headings are kept when syncing. Saved waypoints, routes, and themes are kept.
 
 ## What's new in v2.3.1
 
@@ -51,11 +62,11 @@ Upgrading from v2.2: re-import the PBs you use. Saved waypoints, routes, and the
 
 | File | Purpose |
 |------|---------|
-| Navigator_Ship_Screen_v2.3.1.txt | Ship PB — clickable screen UI |
-| Navigator_Ship_NoScreen_v2.3.1.txt | Ship PB — AR HUD, no screen required |
-| Navigator_Base_v2.3.1.txt | Personal base PB |
-| Navigator_OrgBase_Admin_v2.3.1.txt | Org base — admin and editing |
-| Navigator_OrgBase_Sync_v2.3.1.txt | Org base — serves waypoints to ships |
+| Navigator_Ship_Screen_v2.3.2.txt | Ship PB — clickable screen UI |
+| Navigator_Ship_NoScreen_v2.3.2.txt | Ship PB — AR HUD, no screen required |
+| Navigator_Base_v2.3.2.txt | Personal base PB |
+| Navigator_OrgBase_Admin_v2.3.2.txt | Org base — admin and editing |
+| Navigator_OrgBase_Sync_v2.3.2.txt | Org base — serves waypoints to ships |
 
 All files are in the `dist/` folder. Tools (backup/restore, databank inspector) are in `dist/tools/`.
 
@@ -65,7 +76,7 @@ All files are in the `dist/` folder. Tools (backup/restore, databank inspector) 
 
 ### Personal use (ship + base)
 
-1. Import `Navigator_Base_v2.3.1.txt` into a PB at your base. Slots are **auto-detected** — link a Screen Unit, Databank, Receiver, and Emitter to any of the PB's slots, in any order.
+1. Import `Navigator_Base_v2.3.2.txt` into a PB at your base. Slots are **auto-detected** — link a Screen Unit, Databank, Receiver, and Emitter to any of the PB's slots, in any order.
 
 2. Import your chosen ship PB. Slots are **auto-detected** here too — link the required elements to any of the PB's slots, in any order:
 

@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR SHIP - SCREEN VERSION v2.3.1
+-- NAVIGATOR SHIP - SCREEN VERSION v2.3.2
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -535,7 +535,7 @@ do
   if not screen then system.print("[NAV] WARNING: no Screen Unit detected — this is the screen version, link one") end
 end
 
-local VERSION="v2.3.1"
+local VERSION="v2.3.2"
 Atlas        =nil
 CustomAtlas ="atlas"   --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
@@ -2539,7 +2539,7 @@ end
 
 if lo=="nhelp" or lo=="navhelp" then
   system.print("═══════════════════════════════════════")
-  system.print("  NAVIGATOR v2.3.1  CHAT COMMANDS  (nhelp)")
+  system.print("  NAVIGATOR v2.3.2  CHAT COMMANDS  (nhelp)")
   system.print("═══════════════════════════════════════")
   system.print("── Waypoints ─────────────────────────")
   system.print("add NAME           save current pos as WP")

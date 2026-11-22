@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR PERSONAL BASE v2.3.1
+-- NAVIGATOR PERSONAL BASE v2.3.2
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -342,7 +342,7 @@ elseif Status~="" then
   addText(Lt,fT,Status,8,FOOT_Y+16)
 else
   setNextFillColor(Lt,DMr,DMg,DMb,1) setNextTextAlign(Lt,AlignH_Left,AlignV_Middle)
-  addText(Lt,fS,"NAV BASE v2.3.1  |  chat: nhelp",8,FOOT_Y+16)
+  addText(Lt,fS,"NAV BASE v2.3.2  |  chat: nhelp",8,FOOT_Y+16)
 end
 setOutput(json.encode({a=_S.action}))
 requestAnimationFrame(2)
@@ -985,7 +985,7 @@ do
   system.print("[BASE] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION="v2.3.1"
+local VERSION="v2.3.2"
 BaseChannel = "NavBase" --export: Channel ships use to reach this base
 
 WaypointList = {}
@@ -1829,7 +1829,7 @@ end
 
 if lo=="help" or lo=="nhelp" or lo=="navhelp" then
   system.print("══════════════════════════════════")
-  system.print("  NAV BASE v2.3.1  CHAT COMMANDS")
+  system.print("  NAV BASE v2.3.2  CHAT COMMANDS")
   system.print("══════════════════════════════════")
   system.print("add NAME ::pos{..}  add/update WP on active tab")
   system.print("del                 delete selected item")

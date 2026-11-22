@@ -1,5 +1,5 @@
 -- ================================================================
--- NAVIGATOR SHIP - NO SCREEN VERSION v2.3.1
+-- NAVIGATOR SHIP - NO SCREEN VERSION v2.3.2
 -- Dual Universe Navigation System
 --
 -- SLOT CONNECTIONS: link to ANY slot, in any order — auto-detected at startup.
@@ -793,7 +793,7 @@ do
   system.print("[NAV] "..(#dbg>0 and table.concat(dbg,"  ") or "no slots linked"))
 end
 
-local VERSION="v2.3.1"
+local VERSION="v2.3.2"
 CustomAtlas  ="atlas"  --export: Atlas file to load (default=atlas, set to custom filename in autoconf/custom/)
 BaseChannel ="NavBase" --export: Personal base channel
 CalcSpeed   =0        --export: Time Calc max speed in space in km/h. 0 = auto-detect your ship's actual max speed. Set a value to plan at a slower cruise speed instead (e.g. to save fuel).
@@ -2216,7 +2216,7 @@ local t=Trim(text); local lo=t:lower()
 
 if lo=="nhelp" or lo=="navhelp" then
   system.print("═══════════════════════════════")
-  system.print("  NAVIGATOR v2.3.1  (No Screen)")
+  system.print("  NAVIGATOR v2.3.2  (No Screen)")
   system.print("═══════════════════════════════")
   system.print("add NAME              save a WP where your ship is now")
   system.print("add NAME ::pos{..}    save a WP at those coordinates")
