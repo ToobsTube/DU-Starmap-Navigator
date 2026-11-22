@@ -106,7 +106,8 @@ HELM_WORDS={["help"]=true,["?"]=true,ap=true,go=true,stop=true,clear=true,hud=tr
   settings=true,links=true,target=true,speed=true,stopdist=true,brakes=true,engines=true,tags=true,
   fuel=true,fuelinfo=true,fueltalents=true,landsafety=true,park=true,fhud=true,autolevel=true,
   farside=true,ahead=true,navinfo=true,["goto"]=true,["/goto"]=true,radar=true,mode=true,
-  flight=true,maneuver=true,thrust=true,chat=true,hdg=true,agg=true}
+  flight=true,maneuver=true,thrust=true,chat=true,hdg=true,agg=true,
+  arrival=true,alt=true,autowarp=true,mass=true,planets=true,rockets=true}
 
 -- Clear the DU map destination. setWaypoint("") makes DU print "Invalid destination:",
 -- so use clearWaypoint when the API has it, otherwise leave the marker alone.
@@ -1003,6 +1004,20 @@ function AddStops(routeName,list)
   SetStatus(msg,8)
 end
 
+-- Chat deletes ask twice: the first del/delroute/delstop arms, the same one
+-- again within 15 s deletes. key names the exact item (and org), so typing a
+-- different delete in between re-arms for that one instead.
+DelArmKey,DelArmUntil="",0
+function ConfirmDel(key,lbl,cmd)
+  local now=system.getArkTime()
+  if DelArmKey==key and now<DelArmUntil then DelArmKey=""; DelArmUntil=0; return true end
+  DelArmKey=key; DelArmUntil=now+15
+  SetStatus("Type "..cmd.." again within 15 s to delete "..lbl,15); return false
+end
+function FindByName(list,name)
+  for _,v in ipairs(list) do if v.n:lower()==name:lower() then return v end end
+end
+
 function DelStop(routeName,idx)
   local routes=ContextRoutes()
   for _,r in ipairs(routes) do
@@ -1392,15 +1407,38 @@ function GetSubItems()
     else
       table.insert(items,{type="info",label="No nav target set"})
     end
-    table.insert(items,{type="hdr",label="PERSONAL WPs"})
     local cp=GetCurrentPos()
-    for _,wp in ipairs(PersonalWPs) do
-      local tp=ParsePos(wp.c)
-      local dist=tp and cp and CalcDist(cp,tp) or nil
-      local t=dist and CalcTravelTime(dist) or nil
-      table.insert(items,{type="time",n=wp.n,dist=dist,t=t})
+    local function legT(a,b) if not (a and b) then return nil end return CalcTravelTime(CalcDist(a,b)) or 0 end
+    local function addWPs(hdr,wps,ctx)
+      if #wps==0 then return end
+      table.insert(items,{type="hdr",label=hdr})
+      for _,wp in ipairs(wps) do
+        table.insert(items,{type="time",n=wp.n,c=wp.c,t=legT(cp,ParsePos(wp.c)),ctx=ctx})
+      end
     end
-    if #PersonalWPs==0 then table.insert(items,{type="info",label="No waypoints"}) end
+    -- Whole route: here -> stop 1 -> ... -> last stop, each leg a full stop
+    local function addRoutes(hdr,rts,ctx)
+      if #rts==0 then return end
+      table.insert(items,{type="hdr",label=hdr})
+      for _,r in ipairs(rts) do
+        local t,prev=0,cp
+        for _,s in ipairs(r.pts or {}) do
+          local lt=legT(prev,ParsePos(s.c))
+          if not lt then t=nil; break end
+          t=t+lt; prev=ParsePos(s.c)
+        end
+        if #(r.pts or {})==0 then t=nil end
+        table.insert(items,{type="time_rt",n=r.n,stops=#(r.pts or {}),t=t,ctx=ctx})
+      end
+    end
+    addWPs("PERSONAL WPs",PersonalWPs,"personal")
+    addRoutes("PERSONAL ROUTES",PersonalRoutes,"personal")
+    for _,org in ipairs(OrgNames) do
+      local od=OrgData[org] or {}
+      addWPs(org:upper().." WPs",od.wps or {},org)
+      addRoutes(org:upper().." ROUTES",od.routes or {},org)
+    end
+    if #items<=2 then table.insert(items,{type="info",label="No waypoints or routes"}) end
   end
 
   return items
@@ -1429,8 +1467,10 @@ function GetActions(item)
     return {{label="Navigate Route",key="nav"},{label="Print Stops",key="print"}}
   elseif item.type=="stop" then
     return {{label="Navigate Stop",key="nav"}}
-  elseif item.type=="atlas" then
+  elseif item.type=="atlas" or item.type=="time" then
     return {{label="Navigate",key="nav"}}
+  elseif item.type=="time_rt" then
+    return {{label="Navigate Route",key="nav"}}
   end
   return nil
 end
@@ -1439,6 +1479,10 @@ function ExecuteAction(item, actionKey)
   if actionKey=="nav" then
     if item.type=="wp" then
       ActiveContext=item.ctx; SetNavWP(item.n)
+    elseif item.type=="time" then
+      ActiveContext=item.ctx or "personal"; SetNavWP(item.n)
+    elseif item.type=="time_rt" then
+      ActiveContext=item.ctx or "personal"; SetNavRoute(item.n,1)
     elseif item.type=="route" then
       ActiveContext=item.ctx; SetNavRoute(item.n,1)
     elseif item.type=="stop" then
@@ -1635,9 +1679,13 @@ function DrawHUD()
       h[#h+1]=string.format('<div class="%s"%s><span>%s</span><span class="arr">&#62;</span></div>',
         cls, style, item.label or "PRINT")
     elseif item.type=="time" then
-      local cls="rr rw"
-      h[#h+1]=string.format('<div class="%s"><span>%s</span><span style="opacity:0.75">%s</span></div>',
-        cls, item.n:sub(1,18), item.t and FormatTime(item.t) or "---")
+      local cls="rr rw"..(isSel and " rsel" or "")
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.75">%s</span><span class="arr">&#62;</span></span></div>',
+        cls, sIdx, item.n:sub(1,18), item.t and FormatTime(item.t) or "---")
+    elseif item.type=="time_rt" then
+      local cls="rr rrt"..(isSel and " rsel" or "")
+      h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s <span style="opacity:0.55">(%d)</span></span><span><span style="opacity:0.75">%s</span><span class="arr">&#62;</span></span></div>',
+        cls, sIdx, item.n:sub(1,14), item.stops or 0, item.t and FormatTime(item.t) or "---")
     elseif item.type=="org_entry" then
       local cls="rr ra"..(isSel and " rsel" or "")
       h[#h+1]=string.format('<div class="%s"><span><span class="num">%d</span>%s</span><span><span style="opacity:0.55">%s</span><span class="arr">&#62;</span></span></div>',
@@ -2175,7 +2223,8 @@ if lo=="nhelp" or lo=="navhelp" then
   system.print("  (using an existing WP name moves that WP to the new spot)")
   system.print("heading               which way the ship faces now (0 = north, 90 = east)")
   system.print("heading NAME > 45     WP parking heading for Helmsman (also: here, clear)")
-  system.print("del NAME               delete WP")
+  system.print("del NAME               delete WP (type it twice to confirm,")
+  system.print("                       same for delroute / delstop)")
   system.print("rename OLD > NEW       rename WP")
   system.print("newroute NAME          create route")
   system.print("renameroute OLD > NEW  rename route")
@@ -2254,7 +2303,13 @@ if srQ~=nil then
 end
 
 local delN=t:match("^[Dd][Ee][Ll]%s+(.+)$")
-if delN and delN:lower()~="route" then DelWP(Trim(delN)); return end
+if delN and delN:lower()~="route" then
+  local wp=FindByName(ContextWPs(),Trim(delN))
+  if not wp then SetStatus("Not found: "..Trim(delN))
+  elseif wp.lk then SetStatus("Locked: unlock "..wp.n.." before deleting it")
+  elseif ConfirmDel("wp:"..ActiveContext..":"..wp.n:lower(),"WP: "..wp.n,"del "..wp.n) then DelWP(wp.n) end
+  return
+end
 
 local nrN=t:match("^[Nn][Ee][Ww][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
 if nrN then AddRoute(Trim(nrN)); return end
@@ -2282,10 +2337,21 @@ if asRT then
 end
 
 local dsRT,dsN=t:match("^[Dd][Ee][Ll][Ss][Tt][Oo][Pp]%s+(.-)%s+(%d+)%s*$")
-if dsRT then DelStop(Trim(dsRT),tonumber(dsN)); return end
+if dsRT then
+  local r=FindByName(ContextRoutes(),Trim(dsRT)); local i=tonumber(dsN)
+  if not r then SetStatus("Route not found: "..Trim(dsRT))
+  elseif i<1 or i>#r.pts then SetStatus("Stop index out of range")
+  elseif ConfirmDel("stop:"..ActiveContext..":"..r.n:lower()..":"..i,"stop "..i.." of "..r.n,"delstop "..r.n.." "..i) then DelStop(r.n,i) end
+  return
+end
 
 local drN=t:match("^[Dd][Ee][Ll][Rr][Oo][Uu][Tt][Ee]%s+(.+)")
-if drN then DelRoute(Trim(drN)); return end
+if drN then
+  local r=FindByName(ContextRoutes(),Trim(drN))
+  if not r then SetStatus("Route not found: "..Trim(drN))
+  elseif ConfirmDel("route:"..ActiveContext..":"..r.n:lower(),"route: "..r.n,"delroute "..r.n) then DelRoute(r.n) end
+  return
+end
 
 -- rename OLD > NEW / renameroute OLD > NEW   ('>' lets names contain spaces)
 local rnKind=lo:match("^(%a+)")

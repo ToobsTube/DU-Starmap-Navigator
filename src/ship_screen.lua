@@ -108,7 +108,8 @@ HELM_WORDS={["help"]=true,["?"]=true,ap=true,go=true,stop=true,clear=true,hud=tr
   settings=true,links=true,target=true,speed=true,stopdist=true,brakes=true,engines=true,tags=true,
   fuel=true,fuelinfo=true,fueltalents=true,landsafety=true,park=true,fhud=true,autolevel=true,
   farside=true,ahead=true,navinfo=true,["goto"]=true,["/goto"]=true,radar=true,mode=true,
-  flight=true,maneuver=true,thrust=true,chat=true,hdg=true,agg=true}
+  flight=true,maneuver=true,thrust=true,chat=true,hdg=true,agg=true,
+  arrival=true,alt=true,autowarp=true,mass=true,planets=true,rockets=true}
 
 -- Clear the DU map destination. setWaypoint("") makes DU print "Invalid destination:",
 -- so use clearWaypoint when the API has it, otherwise leave the marker alone.
@@ -584,6 +585,7 @@ ShowFirstSync   = false
 ShowSettings    = false
 ShowHelp        = false  -- on-screen help (chat may not reach a switch-started board)
 PickStops       = false   -- ADD STOP pick mode: clicking a WP appends it to SelRoute
+DelArmKey       = ""; DelArmUntil=0  -- DELETE button: first click arms, second click within 5 s deletes
 ThemeSlots      = nil   -- loaded on init
 Palette         = nil   -- derived from ThemeSlots
 PickerElem      = 1     -- 1-8, which slot is being edited
@@ -659,6 +661,38 @@ function TabAddWP(name,posStr,tab,here,h)
   table.insert(list,{n=name,c=posStr,h=here and h or nil})
   table.sort(list,function(a,b) return a.n:lower()<b.n:lower() end)
   SaveData(); SetStatus("Saved WP: "..name..((here and h) and string.format("  (facing %.0f°)",h) or "")); return true
+end
+
+-- What the DELETE button would remove now: kind ("wp"/"stop"/"route"), a key
+-- that changes with the selection (so a new selection disarms it), and a label.
+function DelSelTarget()
+  if ActiveTab==#OrgNames+1 then return nil end   -- ATLAS tab: nothing to delete
+  if SelWP~="" then return "wp","wp:"..SelWP,"WP: "..SelWP end
+  if SelRoute~="" and SelStop>0 then return "stop","stop:"..SelRoute..":"..SelStop,"stop "..SelStop.." of "..SelRoute end
+  if SelRoute~="" then return "route","route:"..SelRoute,"route: "..SelRoute end
+end
+function DelArmed()
+  local _,key=DelSelTarget()
+  return key~=nil and key==DelArmKey and system.getArkTime()<DelArmUntil
+end
+-- DELETE button click or chat "del": arm on the first, delete on the second.
+function DelSelected(fromChat)
+  local kind,key,lbl=DelSelTarget()
+  if not kind then SetStatus("Select a WP, route or stop first") return end
+  if kind=="wp" then
+    for _,wp in ipairs(GetTabWPs()) do
+      if wp.n==SelWP and wp.lk then SetStatus("Locked: unlock "..SelWP.." before deleting it") return end
+    end
+  end
+  if not DelArmed() then
+    local dur=fromChat and 15 or 5
+    DelArmKey=key; DelArmUntil=system.getArkTime()+dur
+    SetStatus((fromChat and "Type del again to delete " or "Click CONFIRM to delete ")..lbl,dur) return
+  end
+  DelArmKey=""; DelArmUntil=0
+  if kind=="wp" then TabDelWP(SelWP,ActiveTab); SelWP=""
+  elseif kind=="stop" then DelStop(SelRoute,SelStop,ActiveTab)
+  else TabDelRoute(SelRoute,ActiveTab); SelRoute=""; SelStop=0 end
 end
 
 function TabDelWP(name,tab)
@@ -1238,6 +1272,7 @@ local AutoFly=%s
 local ShowSettings=%s
 local ShowHelp=%s
 local PickStops=%s
+local DelArmed=%s
 local VER=%q local BaseCh=%q local ShipId=%q
 ]],
     P.ar,P.ag,P.ab, P.nr,P.ng,P.nb,
@@ -1259,7 +1294,7 @@ local VER=%q local BaseCh=%q local ShipId=%q
     nName,nDist,nTime,nCoord,nType,nStop,nTotal,
     StatusMsg,ActiveTab,atlasTabIdx,AtlasSearch,wpLit,rtLit,ptLit,tnLit,atLit,
     orgChLit,tostring(ShowFirstSync),tostring(AutoFly),
-    tostring(ShowSettings),tostring(ShowHelp),tostring(PickStops and SelRoute~=""),VERSION,BaseChannel or "",ShipID or "")
+    tostring(ShowSettings),tostring(ShowHelp),tostring(PickStops and SelRoute~=""),tostring(DelArmed()),VERSION,BaseChannel or "",ShipID or "")
 
   S[2]=[[
 local Lbg=createLayer() local Lp=createLayer() local Ll=createLayer()
@@ -1443,6 +1478,9 @@ else
     if wp.lk then
       setNextFillColor(Lh,Ar,Ag,Ab,0.9) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
       addText(Lh,fS,"LK",lkX+lkW/2,ry+C/2)
+    elseif hv and not PickStops then
+      setNextFillColor(Lh,Ar,Ag,Ab,0.3) setNextTextAlign(Lh,AlignH_Center,AlignV_Middle)
+      addText(Lh,fS,"LK",lkX+lkW/2,ry+C/2)
     end
     if wp.h then
       setNextFillColor(Lh,Ar,Ag,Ab,0.75) setNextTextAlign(Lh,AlignH_Right,AlignV_Middle)
@@ -1551,6 +1589,10 @@ local HELP={
 "NEXT STOP  go to the next stop on a route",
 "AUTO FLY  advance route stops automatically",
 "SETTINGS  sync, push, org sync, theme",
+"LOCK  locked WPs aren't pushed, overwritten or",
+"     deleted (or click LK at the end of a WP row)",
+"DEL  delete the selected WP, route or stop:",
+"     click once, then CONFIRM within 5 seconds",
 "#CHAT COMMANDS (Lua chat)",
 "nhelp  full command list in the console",
 "add NAME  save your position as a waypoint",
@@ -1639,7 +1681,7 @@ end
 -- Buttons: two columns of half-width buttons, anchored above the footer
 local bX=nvX+5 local bW=nvW-10 local bH=26 local bG=4
 local hW=math.floor((bW-bG)/2) local bX2=bX+hW+bG
-local by=SH-32-(bH+bG)*6-4
+local by=SH-32-(bH+bG)*7-4
 local hasSelItem=(SelWP~="" or SelRT~="")
 local hasCoordTarget=(SelWP~="" or (SelRT~="" and SelStop>0))
 local function Pair(l1,e1,a1,l2,e2,a2)
@@ -1650,6 +1692,14 @@ end
 Pair("MARK WP",true,{"mark_wp"}, "MARK STOP",SelRT~="",{"mark_stop"})
 Pair("NEW ROUTE",true,{"newroute"}, PickStops and "DONE ADDING" or "ADD STOP",SelRT~="",{PickStops and "addstop_done" or "addstop"})
 Pair("RENAME",hasSelItem,{"rename"}, "SET COORDS",hasCoordTarget,{"setcoords"})
+do local selLk=false
+  for _,w in ipairs(WP) do if w.n==SelWP then selLk=w.lk and true or false break end end
+  local onAtlas=(ActiveTab==ATLAS_TAB)
+  local delLbl=(SelWP~="" and "DEL WP") or (SelRT~="" and SelStop>0 and "DEL STOP") or (SelRT~="" and "DEL ROUTE") or "DELETE"
+  if DelArmed then delLbl="CONFIRM" end
+  Pair(selLk and "UNLOCK" or "LOCK",SelWP~="" and not onAtlas,{selLk and "unlock_wp" or "lock_wp",SelWP},
+       delLbl,hasSelItem and not onAtlas,{"del_sel"})
+end
 if ActiveTab==ATLAS_TAB then
   if Btn("NAVIGATE TO BODY",bX,by,bW,bH,SelWP~="",fM) then Out=json.encode({"nav_atlas",SelWP}) end by=by+bH+bG
 else
@@ -2225,6 +2275,7 @@ elseif act=="unlock_wp" then
       if wp.n==wname then wp.lk=nil; SaveData(); SetStatus("Unlocked: "..wname); break end
     end
   end
+elseif act=="del_sel"  then DelSelected()
 elseif act=="next_stop" then NextStop()
 elseif act=="prev_stop" then PrevStop()
 elseif act=="autofly_on" then
@@ -2497,7 +2548,10 @@ if lo=="nhelp" or lo=="navhelp" then
   system.print("heading            which way the ship faces now (0 = north, 90 = east)")
   system.print("heading 45         selected WP's parking heading for Helmsman")
   system.print("  (also: heading here, heading clear, heading NAME > 45)")
-  system.print("del                delete selected WP")
+  system.print("lock / unlock      lock selected WP (won't push or be overwritten by sync)")
+  system.print("  (also: lock NAME, unlock NAME, or click LK at the right end of a WP row)")
+  system.print("del                delete the selected WP, stop or route")
+  system.print("  (type it twice to confirm, or use DEL then CONFIRM on screen)")
   system.print("rename NEWNAME     rename selected WP or route")
   system.print("setpos ::pos{..}   update selected WP coords")
   system.print("nav                navigate to selected WP")
@@ -2587,8 +2641,18 @@ end
 -- delstop N
 local dsN=t:match("^[Dd][Ee][Ll][Ss][Tt][Oo][Pp]%s+(%d+)")
 if dsN then
+  local i=tonumber(dsN)
   if SelRoute=="" then SetStatus("Select a route first")
-  else DelStop(SelRoute,tonumber(dsN),ActiveTab) end
+  else
+    -- same arm-then-confirm as del (shares DelArmKey, so CONFIRM on screen also works)
+    local key="stop:"..SelRoute..":"..i
+    if DelArmKey==key and system.getArkTime()<DelArmUntil then
+      DelArmKey=""; DelArmUntil=0; DelStop(SelRoute,i,ActiveTab)
+    else
+      DelArmKey=key; DelArmUntil=system.getArkTime()+15
+      SetStatus("Type delstop "..i.." again to delete stop "..i.." of "..SelRoute,15)
+    end
+  end
   DrawScreen(); return
 end
 
@@ -2631,7 +2695,7 @@ if srQ~=nil then
 end
 
 -- lock / unlock WPNAME
-local lkN=t:match("^[Ll][Oo][Cc][Kk]%s+(.*)")
+local lkN=(t.." "):match("^[Ll][Oo][Cc][Kk]%s+(.*)")
 if lkN~=nil then
   lkN=Trim(lkN); if lkN=="" then lkN=SelWP end
   if lkN=="" then SetStatus("Select a WP or: lock WPNAME") DrawScreen(); return end
@@ -2639,7 +2703,7 @@ if lkN~=nil then
   for _,wp in ipairs(wps) do if wp.n:lower()==lkN:lower() then wp.lk=true; SaveData(); SetStatus("Locked: "..wp.n) DrawScreen(); return end end
   SetStatus("WP not found: "..lkN); DrawScreen(); return
 end
-local ulN=t:match("^[Uu][Nn][Ll][Oo][Cc][Kk]%s+(.*)")
+local ulN=(t.." "):match("^[Uu][Nn][Ll][Oo][Cc][Kk]%s+(.*)")
 if ulN~=nil then
   ulN=Trim(ulN); if ulN=="" then ulN=SelWP end
   if ulN=="" then SetStatus("Select a WP or: unlock WPNAME") DrawScreen(); return end
@@ -2649,12 +2713,7 @@ if ulN~=nil then
 end
 
 -- del
-if lo=="del" then
-  if SelWP~="" then TabDelWP(SelWP,ActiveTab); SelWP=""
-  elseif SelRoute~="" then TabDelRoute(SelRoute,ActiveTab); SelRoute=""; SelStop=0
-  else SetStatus("Select a WP or route first") end
-  DrawScreen(); return
-end
+if lo=="del" then DelSelected(true); DrawScreen(); return end
 
 -- nav (navigate to selected item)
 if lo=="nav" then

@@ -230,6 +230,8 @@ Long lists show a scrollbar on the right edge: click the arrows to step one row 
 | ADD STOP | Starts adding stops to the selected route: click waypoints in the left panel to add them in order (or type a WP name / `::pos{}` in chat). The button changes to **DONE ADDING** — click it when finished |
 | RENAME | Prompts you in chat to type a new name for the selected WP, route, or stop |
 | SET COORDS | Prompts you in chat to paste `::pos{}` coords for the selected WP or stop |
+| LOCK / UNLOCK | Locks or unlocks the selected waypoint (same as clicking LK on its row) |
+| DEL WP / DEL ROUTE / DEL STOP | Deletes whatever is selected. The first click changes the button to **CONFIRM**; click it again within 5 seconds to delete. Locked waypoints must be unlocked first. Works without chat, so it suits boards started by a switch |
 | NAV WP | Sets the selected waypoint as your nav target |
 | NAV ROUTE | Starts the selected route from stop 1 |
 | NAVIGATE TO BODY | *(ATLAS tab)* Sets the selected planet/moon as your nav target |
@@ -237,7 +239,7 @@ Long lists show a scrollbar on the right edge: click the arrows to step one row 
 | AUTO FLY | Toggle automatic route flying — Navigator advances stops and engages autopilot automatically. Shows ON / OFF |
 | CLEAR NAV | Removes your current nav target |
 | PRINT COORDS | Prints the selected waypoint's coordinates to Lua chat as a clickable nav marker |
-| LK *(in waypoint list)* | Toggle waypoint lock — locked WPs show an LK badge and are excluded from push/sync |
+| LK *(right end of a waypoint row)* | Toggle waypoint lock — locked WPs show an LK badge and are excluded from push/sync. On an unlocked row, LK shows faintly when you hover there |
 
 ### Settings panel
 Click **SETTINGS** in the footer. The panel shows the version, ship ID, base channel, and the channel of the org tab you're on. Click **BACK** (or **CLOSE** in the footer) to return.
@@ -281,14 +283,14 @@ Type these in Lua chat while the PB is running. Most editing actions can also be
 | `setpos ::pos{...}` | Update coords of the selected WP or stop |
 | `heading` | Show which way the ship is facing now (0 = north, 90 = east) |
 | `heading 45` | Set the selected waypoint's parking heading. Also `heading here` (the way you're facing now), `heading clear`, or `heading NAME > 45` |
-| `del` | Delete the selected WP, route, or stop |
+| `del` | Delete the selected WP, route, or stop. Type it twice (within 15 s) to confirm. Locked WPs must be unlocked first |
 | `newroute NAME` | Create a new route |
 | `addstop WAYPOINT NAME` | Add a saved waypoint as the last stop on the selected route |
 | `addstop ::pos{...}` | Add coordinates as the last stop on the selected route |
 | `addstop NAME; NAME; ...` | Add several stops at once, in that order (e.g. `addstop Home; Mine; ::pos{...}`) |
-| `delstop N` | Remove stop number N from the selected route |
-| `lock WPNAME` | Lock a waypoint — prevents it being pushed to base or overwritten by sync |
-| `unlock WPNAME` | Remove the lock from a waypoint |
+| `delstop N` | Remove stop number N from the selected route. Type it twice to confirm |
+| `lock WPNAME` | Lock a waypoint — prevents it being pushed to base or overwritten by sync. `lock` alone locks the selected WP |
+| `unlock WPNAME` | Remove the lock from a waypoint. `unlock` alone unlocks the selected WP |
 | `sync` | Sync from personal base |
 | `orgsync` | Sync from the org on the current tab |
 | `firstsync CHANNEL` | First-time sync with a new org (e.g. `firstsync NavOrg`) |
@@ -381,7 +383,7 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 |---------|-------------|
 | `add NAME` | Add a waypoint at your current position. If NAME already exists, that waypoint moves to where you are now |
 | `add NAME ::pos{...}` | Add a waypoint at those coords. If NAME already exists, its coords are replaced |
-| `del NAME` | Delete a waypoint by name |
+| `del NAME` | Delete a waypoint by name. Type it twice (within 15 s) to confirm. Locked WPs must be unlocked first |
 | `rename OLD NAME > NEW NAME` | Rename a waypoint (keeps its coords and lock) |
 | `heading` | Show which way the ship is facing now (0 = north, 90 = east) |
 | `heading NAME > 45` | Set a waypoint's parking heading. Also `heading NAME > here` (the way you're facing now) or `heading NAME > clear` |
@@ -391,8 +393,8 @@ The HUD position is set by the `HudX` and `HudY` export parameters (percentage f
 | `addstop ROUTE > ::pos{...}` | Add coordinates as the last stop on a route |
 | `addstop ROUTE > NAME; NAME; ...` | Add several stops at once, in that order |
 | `addstop ROUTE > here` | Add your current nav target as the last stop |
-| `delstop ROUTE N` | Remove stop number N from a route |
-| `delroute NAME` | Delete a route |
+| `delstop ROUTE N` | Remove stop number N from a route. Type it twice to confirm |
+| `delroute NAME` | Delete a route. Type it twice to confirm |
 | `nav NAME` | Navigate to a waypoint or route by name |
 | `nav off` | Clear navigation |
 | `next` / `prev` | Next / previous route stop |
